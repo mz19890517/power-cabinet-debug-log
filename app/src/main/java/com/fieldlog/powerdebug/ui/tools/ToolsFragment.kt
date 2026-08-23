@@ -7,6 +7,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog.Builder
@@ -74,8 +75,21 @@ class ToolsFragment : Fragment() {
         b.swAutoUpload.setOnCheckedChangeListener { _, checked ->
             SyncStore.setAutoUpload(requireContext(), checked)
         }
-        b.btnSyncUpload.setOnClickListener { syncUpload() }
-        b.btnSyncDownload.setOnClickListener { syncDownload() }
+        b.btnSyncNow.setOnClickListener {
+            val ctx = requireContext()
+            if (SyncStore.currentUser(ctx) == null) {
+                toast("请先登录测试账号"); return@setOnClickListener
+            }
+            toast("正在双向同步…")
+            viewLifecycleOwner.lifecycleScope.launch {
+                try {
+                    toast(WebDavSync.syncAll(ctx))
+                    refreshStats()
+                } catch (e: Exception) {
+                    toast(e.message ?: "同步失败")
+                }
+            }
+        }
     }
 
     override fun onResume() {
@@ -103,58 +117,96 @@ class ToolsFragment : Fragment() {
             else "WebDAV：${cfg.url}"
     }
 
-    /** 登录/添加测试员。密码=超级口令 → 离线直接注册；否则走WebDAV验证 */
+    /**
+     * 登录/添加测试员。密码=超级口令 → 离线直接注册；否则走WebDAV验证。
+     * 弹窗内提供「测试连接」：显示完整诊断报告且不关闭弹窗；
+     * 登录失败时同样把诊断报告写入弹窗，便于把失败原因发给开发者。
+     */
     private fun showLoginDialog(existingUsername: String = "") {
         val ctx = requireContext()
         val dlgView = layoutInflater.inflate(R.layout.dialog_login, null)
         val etServer = dlgView.findViewById<EditText>(R.id.etServer)
         val etUser = dlgView.findViewById<EditText>(R.id.etUsername)
         val etPass = dlgView.findViewById<EditText>(R.id.etPassword)
+        val btnTest = dlgView.findViewById<View>(R.id.btnTestConn)
+        val tvDiag = dlgView.findViewById<TextView>(R.id.tvDiagResult)
 
         SyncStore.config(ctx)?.let {
             etServer.setText(it.url); etUser.setText(it.user)
         } ?: run { if (existingUsername.isNotEmpty()) etUser.setText(existingUsername) }
 
-        Builder(ctx)
+        fun currentClient(): WebDavClient? {
+            val user = etUser.text?.toString()?.trim().orEmpty()
+            val pass = etPass.text?.toString() ?: ""
+            val url = etServer.text?.toString()?.trim().orEmpty()
+            if (user.isEmpty() || url.isEmpty()) return null
+            return WebDavClient(url, user, pass)
+        }
+
+        btnTest.setOnClickListener {
+            val cl = currentClient()
+            if (cl == null) {
+                tvDiag.visibility = View.VISIBLE
+                tvDiag.text = "请先填写服务器地址和账号"
+                return@setOnClickListener
+            }
+            tvDiag.visibility = View.VISIBLE
+            tvDiag.text = "正在测试连接…"
+            viewLifecycleOwner.lifecycleScope.launch {
+                val report = withContext(Dispatchers.IO) { cl.diagnose() }
+                tvDiag.text = report
+            }
+        }
+
+        val dlg = Builder(ctx)
             .setTitle(R.string.sync_login)
             .setView(dlgView)
-            .setPositiveButton(R.string.confirm) { _, _ ->
-                val username = etUser.text?.toString()?.trim().orEmpty()
-                val pass = etPass.text?.toString() ?: ""
-                if (username.isEmpty()) {
-                    toast("请输入账号"); return@setPositiveButton
-                }
-                if (pass == SyncStore.SUPER_PASSWORD) {
-                    lifecycleScope.launch {
-                        App.repo.registerTester(username, TesterAccount.SOURCE_SUPER)
-                        SyncStore.setCurrentUser(ctx, username)
-                        refreshAccountUI()
-                        toast(getString(R.string.sync_login_super, username))
-                    }
-                    return@setPositiveButton
-                }
-                val url = etServer.text?.toString()?.trim().orEmpty()
-                if (url.isEmpty()) {
-                    toast("请填写服务器地址，或使用超级口令"); return@setPositiveButton
-                }
-                toast(R.string.sync_verifying)
+            .setPositiveButton(R.string.confirm, null) // 点击行为手动接管，失败时不关闭
+            .setNegativeButton(R.string.cancel, null)
+            .create()
+
+        fun tryLoginOrShowDiag() {
+            val username = etUser.text?.toString()?.trim().orEmpty()
+            val pass = etPass.text?.toString() ?: ""
+            if (username.isEmpty()) { toast("请输入账号"); return }
+            if (pass == SyncStore.SUPER_PASSWORD) {
                 lifecycleScope.launch {
-                    try {
-                        withContext(Dispatchers.IO) {
-                            WebDavClient(url, username, pass).verify()
-                        }
-                        SyncStore.saveConfig(ctx, url, username, pass)
-                        App.repo.registerTester(username, TesterAccount.SOURCE_WEBDAV)
-                        SyncStore.setCurrentUser(ctx, username)
-                        refreshAccountUI()
-                        toast(getString(R.string.sync_login_ok, username))
-                    } catch (e: Exception) {
-                        toast(e.message ?: "验证失败")
-                    }
+                    App.repo.registerTester(username, TesterAccount.SOURCE_SUPER)
+                    SyncStore.setCurrentUser(ctx, username)
+                    refreshAccountUI()
+                    toast(getString(R.string.sync_login_super, username))
+                    dlg.dismiss()
+                }
+                return
+            }
+            val url = etServer.text?.toString()?.trim().orEmpty()
+            if (url.isEmpty()) {
+                toast("请填写服务器地址，或使用超级口令")
+                return
+            }
+            toast(R.string.sync_verifying)
+            lifecycleScope.launch {
+                val cl = WebDavClient(url, username, pass)
+                val ok = try {
+                    withContext(Dispatchers.IO) { cl.verify(); true }
+                } catch (_: Exception) { false }
+                if (ok) {
+                    SyncStore.saveConfig(ctx, url, username, pass)
+                    App.repo.registerTester(username, TesterAccount.SOURCE_WEBDAV)
+                    SyncStore.setCurrentUser(ctx, username)
+                    refreshAccountUI()
+                    toast(getString(R.string.sync_login_ok, username))
+                    dlg.dismiss()
+                } else {
+                    // 失败：完整诊断留在弹窗内，可复制发回
+                    tvDiag.visibility = View.VISIBLE
+                    tvDiag.text = withContext(Dispatchers.IO) { cl.diagnose() }
                 }
             }
-            .setNegativeButton(R.string.cancel, null)
-            .show()
+        }
+
+        dlg.show()
+        dlg.getButton(AlertDialog.BUTTON_POSITIVE)?.setOnClickListener { tryLoginOrShowDiag() }
     }
 
     /** 从本机已沉淀的测试员中切换归属身份 */
@@ -177,61 +229,6 @@ class ToolsFragment : Fragment() {
                 }
                 .setNegativeButton(R.string.cancel, null)
                 .show()
-        }
-    }
-
-    // ---------- 同步 ----------
-
-    private fun syncUpload() {
-        val ctx = requireContext()
-        if (SyncStore.currentUser(ctx) == null) {
-            toast("请先登录测试账号"); return
-        }
-        toast("正在上传…")
-        viewLifecycleOwner.lifecycleScope.launch {
-            try {
-                val name = WebDavSync.uploadSnapshot(ctx)
-                toast(getString(R.string.sync_upload_ok, name))
-            } catch (e: Exception) {
-                toast(e.message ?: "上传失败")
-            }
-        }
-    }
-
-    private fun syncDownload() {
-        val ctx = requireContext()
-        if (SyncStore.currentUser(ctx) == null) {
-            toast("请先登录测试账号"); return
-        }
-        toast("正在下载…")
-        viewLifecycleOwner.lifecycleScope.launch {
-            try {
-                val text = withContext(Dispatchers.IO) { WebDavSync.fetchRemote(ctx) }
-                val r = App.repo.mergePreview(text)
-                Builder(ctx)
-                    .setTitle(R.string.sync_merge_confirm_title)
-                    .setMessage(getString(R.string.sync_merge_confirm_msg,
-                        r.newProjects, r.updProjects,
-                        r.newTypes, r.updTypes,
-                        r.newInstances, r.updInstances,
-                        r.newLogs, r.updLogs,
-                        r.newFaults, r.updFaults))
-                    .setPositiveButton(R.string.confirm) { _, _ ->
-                        viewLifecycleOwner.lifecycleScope.launch {
-                            try {
-                                App.repo.mergeJson(text)
-                                toast(R.string.sync_merge_done)
-                                refreshStats()
-                            } catch (e: Exception) {
-                                toast(e.message ?: "合并失败")
-                            }
-                        }
-                    }
-                    .setNegativeButton(R.string.cancel, null)
-                    .show()
-            } catch (e: Exception) {
-                toast(e.message ?: "下载失败")
-            }
         }
     }
 

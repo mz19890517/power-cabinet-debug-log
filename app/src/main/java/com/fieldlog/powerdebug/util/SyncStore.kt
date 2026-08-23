@@ -16,6 +16,7 @@ object SyncStore {
     private const val K_PASS = "webdav_pass"
     private const val K_CURRENT = "current_user"
     private const val K_AUTO = "auto_upload"
+    private const val K_LAST_AUTO = "last_auto_sync"
 
     data class Config(val url: String, val user: String, val pass: String)
 
@@ -51,10 +52,19 @@ object SyncStore {
         prefs(ctx).edit().putString(K_CURRENT, user.orEmpty()).apply()
     }
 
-    /** 保存日志后是否自动上传快照 */
-    fun autoUpload(ctx: Context): Boolean = prefs(ctx).getBoolean(K_AUTO, false)
+    /** 保存日志后是否自动上传快照（默认开：连上即基本免操作） */
+    fun autoUpload(ctx: Context): Boolean = prefs(ctx).getBoolean(K_AUTO, true)
 
     fun setAutoUpload(ctx: Context, value: Boolean) {
         prefs(ctx).edit().putBoolean(K_AUTO, value).apply()
+    }
+
+    /** 自动同步节流：距上次不足 minMs 毫秒则跳过，避免频繁旋转/切换触发风暴 */
+    fun shouldAutoSyncNow(ctx: Context, minMs: Long = 60_000L): Boolean {
+        val p = prefs(ctx)
+        val now = System.currentTimeMillis()
+        if (now - p.getLong(K_LAST_AUTO, 0) < minMs) return false
+        p.edit().putLong(K_LAST_AUTO, now).apply()
+        return true
     }
 }

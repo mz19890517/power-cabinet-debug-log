@@ -378,10 +378,10 @@ class LogEditActivity : AppCompatActivity() {
             try {
                 App.repo.saveLog(log, drafts.toList(), actor)
                 Toast.makeText(this@LogEditActivity, R.string.saved_ok, Toast.LENGTH_SHORT).show()
-                // 自动上传：开关开启且已登录时静默推送快照，失败不打扰
+                // 自动同步：开关开启且已登录时静默推送并拉取他人数据，失败不打扰
                 if (SyncStore.autoUpload(this@LogEditActivity) && actor.isNotEmpty()) {
                     CoroutineScope(Dispatchers.IO).launch {
-                        try { WebDavSync.uploadSnapshot(this@LogEditActivity) } catch (_: Exception) {}
+                        try { WebDavSync.syncAll(this@LogEditActivity) } catch (_: Exception) {}
                     }
                 }
                 finish()

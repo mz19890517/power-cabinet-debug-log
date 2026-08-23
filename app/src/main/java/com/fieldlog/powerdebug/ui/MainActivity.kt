@@ -9,6 +9,11 @@ import com.fieldlog.powerdebug.databinding.ActivityMainBinding
 import com.fieldlog.powerdebug.ui.device.DeviceFragment
 import com.fieldlog.powerdebug.ui.log.LogListFragment
 import com.fieldlog.powerdebug.ui.tools.ToolsFragment
+import com.fieldlog.powerdebug.util.SyncStore
+import com.fieldlog.powerdebug.util.WebDavSync
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
 
@@ -28,6 +33,22 @@ class MainActivity : AppCompatActivity() {
                 R.id.nav_tools -> show(ToolsFragment())
             }
             true
+        }
+
+        maybeAutoSync()
+    }
+
+    /**
+     * 打开应用时自动双向同步（开关开启且已登录时）：
+     * 推送本机快照并把其他测试员的快照合并进来，60秒节流防止旋转重建频繁触发。
+     */
+    private fun maybeAutoSync() {
+        if (!SyncStore.autoUpload(this)) return
+        if (SyncStore.currentUser(this) == null || SyncStore.config(this) == null) return
+        if (!SyncStore.shouldAutoSyncNow(this)) return
+        val ctx = this
+        CoroutineScope(Dispatchers.IO).launch {
+            try { WebDavSync.syncAll(ctx) } catch (_: Exception) {}
         }
     }
 

@@ -12,14 +12,28 @@ android {
         applicationId = "com.fieldlog.powerdebug"
         minSdk = 28
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 3
+        versionName = "2.1"
+    }
+
+    signingConfigs {
+        create("fixed") {
+            storeFile = file("signing/powerdebug.keystore")
+            storePassword = "powerdebug2026"
+            keyAlias = "powerdebug"
+            keyPassword = "powerdebug2026"
+        }
     }
 
     buildTypes {
+        // debug与release统一使用固定签名，保证所有历史/未来版本可覆盖安装
+        debug {
+            signingConfig = signingConfigs.getByName("fixed")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.getByName("fixed")
         }
     }
     compileOptions {

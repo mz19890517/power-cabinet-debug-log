@@ -128,10 +128,10 @@
     <string name="sync_login">登录</string>
     <string name="sync_switch">切换身份</string>
     <string name="sync_logout">退出登录</string>
-    <string name="sync_auto_upload">保存日志后自动上传到云端（静默，失败不打扰）</string>
-    <string name="sync_upload">上传备份</string>
-    <string name="sync_download">下载并合并</string>
-    <string name="sync_desc">按账号分文件存储快照；下载为智能合并：新增条目并入本机，同ID冲突时保留修改时间较新的一条，绝不删除本地数据。\n删除操作不参与同步。密码输入超级口令可离线直接注册测试员。</string>
+    <string name="sync_auto_upload">自动同步（保存后推送；打开应用时拉取合并他人记录）</string>
+    <string name="sync_now">立即双向同步</string>
+    <string name="sync_desc">团队互通：所有测试员配置同一个WebDAV目录。每台手机上传自己的快照 backup_账号.json，同时把其他人的快照智能合并进本机——不同测试员的记录自动汇到彼此手机上。\n合并规则：新增并入；同ID冲突保留修改时间较新者；绝不删除本机数据。\n密码栏输入超级口令可离线直接注册测试员。</string>
+    <string name="login_test">测试连接</string>
     <string name="login_server">服务器地址 (WebDAV 目录URL)</string>
     <string name="login_server_hint">如 https://dav.jianguoyun.com/dav/ 或 http://192.168.1.10:5005/dav/调试记录/</string>
     <string name="login_username">账号</string>

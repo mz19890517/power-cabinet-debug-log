@@ -56,6 +56,32 @@
         android:singleLine="true"
         android:textSize="13sp" />
 
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/btnTestConn"
+            style="@style/SmallButton"
+            android:layout_width="wrap_content"
+            android:text="@string/login_test" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/tvDiagResult"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:background="#F3F4F6"
+        android:fontFamily="monospace"
+        android:padding="8dp"
+        android:textIsSelectable="true"
+        android:textColor="@color/text_secondary"
+        android:textSize="10sp"
+        android:visibility="gone" />
+
     <TextView
         android:id="@+id/tvLoginHint"
         android:layout_width="match_parent"
