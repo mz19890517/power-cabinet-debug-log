@@ -29,12 +29,12 @@ data class Stats(
 
 /** 智能合并结果（各表 新增/更新 条数） */
 data class MergeResult(
-    val newProjects: Int = 0, val updProjects: Int = 0,
-    val newTypes: Int = 0, val updTypes: Int = 0,
-    val newCands: Int = 0,
-    val newInstances: Int = 0, val updInstances: Int = 0,
-    val newLogs: Int = 0, val updLogs: Int = 0,
-    val newFaults: Int = 0, val updFaults: Int = 0
+    var newProjects: Int = 0, var updProjects: Int = 0,
+    var newTypes: Int = 0, var updTypes: Int = 0,
+    var newCands: Int = 0,
+    var newInstances: Int = 0, var updInstances: Int = 0,
+    var newLogs: Int = 0, var updLogs: Int = 0,
+    var newFaults: Int = 0, var updFaults: Int = 0
 )
 
 /** 备份文件解析结果：已统一为本机String主键的实体列表 */

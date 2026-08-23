@@ -240,6 +240,16 @@ class ToolsFragment : Fragment() {
     private fun toast(msg: String) =
         Toast.makeText(requireContext(), msg, Toast.LENGTH_LONG).show()
 
+    private fun refreshStats() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            val s = App.repo.stats()
+            b.statProjects.text = s.projects.toString()
+            b.statTypes.text = s.types.toString()
+            b.statLogs.text = s.logs.toString()
+            b.statPending.text = s.pendingFaults.toString()
+        }
+    }
+
     private fun toast(resId: Int) =
         Toast.makeText(requireContext(), resId, Toast.LENGTH_LONG).show()
 
