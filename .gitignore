@@ -8,3 +8,6 @@
 /captures
 .externalNativeBuild
 .cxx
+
+# 构建产物不入库, 从Actions Artifacts下载
+*.apk
