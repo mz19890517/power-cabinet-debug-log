@@ -16,12 +16,16 @@ android {
         versionName = "2.4"
     }
 
+    // 签名密码经环境变量注入（GitHub Secrets），仓库内不出现明文
+    val storePass = System.getenv("SIGNING_STORE_PASSWORD") ?: ""
+    val keyPass = System.getenv("SIGNING_KEY_PASSWORD") ?: storePass
+
     signingConfigs {
         create("fixed") {
             storeFile = file("signing/powerdebug.keystore")
-            storePassword = "powerdebug2026"
+            storePassword = storePass
             keyAlias = "powerdebug"
-            keyPassword = "powerdebug2026"
+            keyPassword = keyPass
         }
     }
 

@@ -11,3 +11,6 @@
 
 # 构建产物不入库, 从Actions Artifacts下载
 *.apk
+
+# 签名密钥本体不入库，仅加密压缩包入库
+app/signing/powerdebug.keystore

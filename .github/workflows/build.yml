@@ -28,7 +28,17 @@ jobs:
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0" > /dev/null
 
+      - name: Restore signing keystore
+        env:
+          ZIP_PASSWORD: ${{ secrets.SIGNING_ZIP_PASSWORD }}
+        run: |
+          unzip -o -P "$ZIP_PASSWORD" app/signing/powerdebug.keystore.zip -d app/signing/
+          test -f app/signing/powerdebug.keystore
+
       - name: Build Debug APK
+        env:
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: gradle -p "$GITHUB_WORKSPACE" assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK artifact

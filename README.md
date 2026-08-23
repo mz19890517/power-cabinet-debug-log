@@ -29,7 +29,11 @@
 
 ## 签名说明
 
-所有版本（debug/release）统一使用仓库内固定密钥 `app/signing/powerdebug.keystore`（alias: powerdebug），保证任意版本可直接覆盖安装。私有仓库场景下随库保存密钥是可接受的折中；若将来开源或公开发布，应改用 GitHub Secrets 注入并轮换密钥。
+所有版本（debug/release）统一使用固定密钥（alias: powerdebug），保证任意版本可直接覆盖安装。
+
+**密钥保管方式**：仓库内只有加密压缩包 `app/signing/powerdebug.keystore.zip`，解压密码不在仓库中（由项目所有者掌握）。构建时由 GitHub Actions Secrets 自动完成：`SIGNING_ZIP_PASSWORD` 解压密钥、`SIGNING_STORE_PASSWORD`/`SIGNING_KEY_PASSWORD` 注入签名。原始 .keystore 文件不入库。
+
+新会话/新维护者需要本地解包签名时，请向项目所有者索取压缩包密码；CI 构建无需人工介入。
 
 ## 技术栈
 
