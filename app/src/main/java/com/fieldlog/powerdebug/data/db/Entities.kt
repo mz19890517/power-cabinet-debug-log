@@ -6,23 +6,31 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
+/**
+ * v2 起全部表主键为客户端生成的 UUID 字符串：
+ * 多台设备离线各自新增数据后可通过 WebDAV 智能合并，不会撞主键。
+ * 每表带 updatedAt 作为合并时钟：同 id 冲突时新者胜。
+ */
+
 /** 工程/项目：调试任务的根单位，一个项目包含一台或多台柜子 */
 @Entity(tableName = "projects")
 data class Project(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    @PrimaryKey val id: String = "",
     val name: String,
     val code: String = "",
     val remark: String = "",
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
 )
 
 /** 柜子类型模板：绑定预选测试项候选池，与具体柜子名字无关 */
 @Entity(tableName = "cabinet_types")
 data class CabinetType(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    @PrimaryKey val id: String = "",
     val name: String,
     val remark: String = "",
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
 )
 
 /** 预选测试项候选池条目，属于某个柜子类型 */
@@ -34,10 +42,11 @@ data class CabinetType(
     ]
 )
 data class CandidateItem(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val typeId: Long,
+    @PrimaryKey val id: String = "",
+    val typeId: String,
     val content: String,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
 )
 
 /** 柜子实例：现场的实设备，隶属一个项目，引用一个柜子类型 */
@@ -60,17 +69,21 @@ data class CandidateItem(
     indices = [Index("projectId"), Index("typeId")]
 )
 data class CabinetInstance(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val projectId: Long,
-    val typeId: Long,
+    @PrimaryKey val id: String = "",
+    val projectId: String,
+    val typeId: String,
     val name: String,
     val deviceCode: String = "",
     val location: String = "",
     val installer: String = "",
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
 )
 
-/** 调试日志；circuit 为空表示整柜测试 */
+/**
+ * 调试日志；circuit 为空表示整柜测试。
+ * createdBy/updatedBy 记录操作账号（未登录为空串），随 WebDAV 同步到其他设备。
+ */
 @Entity(
     tableName = "debug_logs",
     foreignKeys = [
@@ -84,12 +97,14 @@ data class CabinetInstance(
     indices = [Index("instanceId"), Index("createdAt")]
 )
 data class DebugLog(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val instanceId: Long,
+    @PrimaryKey val id: String = "",
+    val instanceId: String,
     val circuit: String = "",
     val testContent: String,
     val tester: String = "",
     val remark: String = "",
+    val createdBy: String = "",
+    val updatedBy: String = "",
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )
@@ -108,18 +123,37 @@ data class DebugLog(
     indices = [Index("logId")]
 )
 data class FaultRecord(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    var logId: Long = 0,
+    @PrimaryKey val id: String = "",
+    var logId: String = "",
     var circuit: String = "",
     var symptom: String = "",
     var solution: String = "",
     var occurredAt: Long = System.currentTimeMillis(),
     var resolvedAt: Long = 0,
-    var status: Int = STATUS_PENDING
+    var status: Int = STATUS_PENDING,
+    var updatedAt: Long = System.currentTimeMillis()
 ) {
     companion object {
         const val STATUS_PENDING = 0
         const val STATUS_RESOLVED = 1
+    }
+}
+
+/** 测试员账号：登录 WebDAV 验证通过或超级密码注册后沉淀在本机，用于切换身份 */
+@Entity(
+    tableName = "tester_accounts",
+    indices = [Index(value = ["username"], unique = true)]
+)
+data class TesterAccount(
+    @PrimaryKey val id: String = "",
+    val username: String,
+    /** webdav = 通过服务器验证；super = 超级密码直接注册 */
+    val source: String = SOURCE_WEBDAV,
+    val createdAt: Long = System.currentTimeMillis()
+) {
+    companion object {
+        const val SOURCE_WEBDAV = "webdav"
+        const val SOURCE_SUPER = "super"
     }
 }
 

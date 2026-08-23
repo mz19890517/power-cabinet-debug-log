@@ -27,11 +27,11 @@ class TypeDetailActivity : AppCompatActivity() {
 
     companion object {
         const val KEY_TYPE_ID = "type_id"
-        fun intent(ctx: Context, typeId: Long) =
+        fun intent(ctx: Context, typeId: String) =
             Intent(ctx, TypeDetailActivity::class.java).putExtra(KEY_TYPE_ID, typeId)
     }
 
-    private var typeId = 0L
+    private var typeId = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -41,7 +41,7 @@ class TypeDetailActivity : AppCompatActivity() {
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
         findViewById<androidx.appcompat.widget.Toolbar>(R.id.toolbar).setNavigationOnClickListener { finish() }
 
-        typeId = intent.getLongExtra(KEY_TYPE_ID, 0L)
+        typeId = intent.getStringExtra(KEY_TYPE_ID).orEmpty()
 
         // 候选池
         val poolAdapter = PoolAdapter()

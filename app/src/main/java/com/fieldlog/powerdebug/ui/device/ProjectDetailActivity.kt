@@ -27,13 +27,13 @@ class ProjectDetailActivity : AppCompatActivity() {
 
     companion object {
         const val KEY_PROJECT_ID = "project_id"
-        fun intent(ctx: Context, projectId: Long) =
+        fun intent(ctx: Context, projectId: String) =
             Intent(ctx, ProjectDetailActivity::class.java).putExtra(KEY_PROJECT_ID, projectId)
     }
 
-    private var projectId = 0L
+    private var projectId = ""
     private lateinit var adapter: InstanceAdapter
-    private var typeNames: Map<Long, String> = emptyMap()
+    private var typeNames: Map<String, String> = emptyMap()
     private var project: Project? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -44,7 +44,7 @@ class ProjectDetailActivity : AppCompatActivity() {
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
         findViewById<androidx.appcompat.widget.Toolbar>(R.id.toolbar).setNavigationOnClickListener { finish() }
 
-        projectId = intent.getLongExtra(KEY_PROJECT_ID, 0L)
+        projectId = intent.getStringExtra(KEY_PROJECT_ID).orEmpty()
 
         lifecycleScope.launch {
             typeNames = App.repo.allTypes().associate { it.id to it.name }
@@ -225,7 +225,7 @@ class ProjectDetailActivity : AppCompatActivity() {
                     lifecycleScope.launch {
                         App.repo.saveInstance(
                             CabinetInstance(
-                                id = existing?.id ?: 0L,
+                                id = existing?.id.orEmpty(),
                                 projectId = projectId,
                                 typeId = type.id,
                                 name = name,

@@ -25,16 +25,19 @@ interface ProjectDao {
     fun watchListItemsAsFlow(): Flow<List<ProjectListItem>>
 
     @Query("SELECT * FROM projects WHERE id = :id")
-    suspend fun getByIdOnce(id: Long): Project?
+    suspend fun getByIdOnce(id: String): Project?
 
     @Insert
-    suspend fun insert(p: Project): Long
+    suspend fun insert(p: Project)
 
     @Insert
     suspend fun insertAll(list: List<Project>)
 
     @Update
     suspend fun update(p: Project)
+
+    @Update
+    suspend fun updateAll(list: List<Project>)
 
     @Delete
     suspend fun delete(p: Project)
@@ -63,16 +66,19 @@ interface CabinetTypeDao {
     fun watchListItemsAsFlow(): Flow<List<TypeListItem>>
 
     @Query("SELECT * FROM cabinet_types WHERE id = :id")
-    suspend fun getByIdOnce(id: Long): CabinetType?
+    suspend fun getByIdOnce(id: String): CabinetType?
 
     @Insert
-    suspend fun insert(t: CabinetType): Long
+    suspend fun insert(t: CabinetType)
 
     @Insert
     suspend fun insertAll(list: List<CabinetType>)
 
     @Update
     suspend fun update(t: CabinetType)
+
+    @Update
+    suspend fun updateAll(list: List<CabinetType>)
 
     @Delete
     suspend fun delete(t: CabinetType)
@@ -87,19 +93,19 @@ interface CabinetTypeDao {
 @Dao
 interface CandidateItemDao {
     @Query("SELECT * FROM candidate_items WHERE typeId = :typeId ORDER BY createdAt, id")
-    fun watchByTypeAsFlow(typeId: Long): Flow<List<CandidateItem>>
+    fun watchByTypeAsFlow(typeId: String): Flow<List<CandidateItem>>
 
     @Query("SELECT * FROM candidate_items WHERE typeId = :typeId ORDER BY createdAt, id")
-    suspend fun byTypeOnce(typeId: Long): List<CandidateItem>
+    suspend fun byTypeOnce(typeId: String): List<CandidateItem>
 
     @Query("SELECT content FROM candidate_items WHERE typeId = :typeId")
-    suspend fun contentsOnce(typeId: Long): List<String>
+    suspend fun contentsOnce(typeId: String): List<String>
 
-    @Query("SELECT * FROM candidate_items ORDER BY id")
+    @Query("SELECT * FROM candidate_items ORDER BY createdAt, id")
     suspend fun allOnce(): List<CandidateItem>
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
-    suspend fun insert(item: CandidateItem): Long
+    suspend fun insert(item: CandidateItem)
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAll(items: List<CandidateItem>)
@@ -114,38 +120,41 @@ interface CandidateItemDao {
 @Dao
 interface InstanceDao {
     @Query("SELECT * FROM instances WHERE projectId = :projectId ORDER BY name")
-    fun watchByProjectAsFlow(projectId: Long): Flow<List<CabinetInstance>>
+    fun watchByProjectAsFlow(projectId: String): Flow<List<CabinetInstance>>
 
     @Query("SELECT * FROM instances WHERE projectId = :projectId ORDER BY name")
-    suspend fun byProjectOnce(projectId: Long): List<CabinetInstance>
+    suspend fun byProjectOnce(projectId: String): List<CabinetInstance>
 
     @Query(
-        "SELECT * FROM instances WHERE (:projectId = 0 OR projectId = :projectId) " +
-            "AND (:typeId = 0 OR typeId = :typeId) ORDER BY name"
+        "SELECT * FROM instances WHERE (:projectId = '' OR projectId = :projectId) " +
+            "AND (:typeId = '' OR typeId = :typeId) ORDER BY name"
     )
-    suspend fun byProjectAndTypeOnce(projectId: Long, typeId: Long): List<CabinetInstance>
+    suspend fun byProjectAndTypeOnce(projectId: String, typeId: String): List<CabinetInstance>
 
     @Query(
         """SELECT i.*, p.name AS projectName FROM instances i 
         INNER JOIN projects p ON i.projectId = p.id 
         WHERE i.typeId = :typeId ORDER BY p.name COLLATE NOCASE, i.name"""
     )
-    suspend fun byTypeWithProject(typeId: Long): List<InstanceRow>
+    suspend fun byTypeWithProject(typeId: String): List<InstanceRow>
 
     @Query("SELECT * FROM instances ORDER BY name")
     suspend fun allOnce(): List<CabinetInstance>
 
     @Query("SELECT * FROM instances WHERE id = :id")
-    suspend fun getByIdOnce(id: Long): CabinetInstance?
+    suspend fun getByIdOnce(id: String): CabinetInstance?
 
     @Insert
-    suspend fun insert(i: CabinetInstance): Long
+    suspend fun insert(i: CabinetInstance)
 
     @Insert
     suspend fun insertAll(list: List<CabinetInstance>)
 
     @Update
     suspend fun update(i: CabinetInstance)
+
+    @Update
+    suspend fun updateAll(list: List<CabinetInstance>)
 
     @Delete
     suspend fun delete(i: CabinetInstance)
@@ -168,9 +177,9 @@ interface DebugLogDao {
         INNER JOIN instances i ON l.instanceId = i.id
         INNER JOIN cabinet_types t ON i.typeId = t.id
         INNER JOIN projects p ON i.projectId = p.id
-        WHERE (:projectId = 0 OR i.projectId = :projectId)
-          AND (:typeId = 0 OR i.typeId = :typeId)
-          AND (:instanceId = 0 OR l.instanceId = :instanceId)
+        WHERE (:projectId = '' OR i.projectId = :projectId)
+          AND (:typeId = '' OR i.typeId = :typeId)
+          AND (:instanceId = '' OR l.instanceId = :instanceId)
           AND (:status = -1
                OR (:status = 0 AND EXISTS(SELECT 1 FROM fault_records fp WHERE fp.logId = l.id AND fp.status = 0))
                OR (:status = 1 AND EXISTS(SELECT 1 FROM fault_records fr WHERE fr.logId = l.id AND fr.status = 1)
@@ -186,7 +195,7 @@ interface DebugLogDao {
         ORDER BY l.createdAt DESC"""
     )
     suspend fun search(
-        projectId: Long, typeId: Long, instanceId: Long,
+        projectId: String, typeId: String, instanceId: String,
         status: Int, circuit: String, q: String
     ): List<LogListItem>
 
@@ -201,7 +210,7 @@ interface DebugLogDao {
         INNER JOIN projects p ON i.projectId = p.id
         WHERE l.id = :id LIMIT 1"""
     )
-    suspend fun getDetailOnce(id: Long): LogListItem?
+    suspend fun getDetailOnce(id: String): LogListItem?
 
     @Query(
         """SELECT l.*, p.name AS projectName, t.name AS typeName, i.name AS instanceName,
@@ -220,29 +229,32 @@ interface DebugLogDao {
         """SELECT DISTINCT l.circuit FROM debug_logs l
         INNER JOIN instances i ON l.instanceId = i.id
         WHERE IFNULL(l.circuit, '') <> ''
-          AND (:typeId = 0 OR i.typeId = :typeId)
-          AND (:projectId = 0 OR i.projectId = :projectId)
+          AND (:typeId = '' OR i.typeId = :typeId)
+          AND (:projectId = '' OR i.projectId = :projectId)
         ORDER BY l.circuit LIMIT 40"""
     )
-    suspend fun distinctCircuits(projectId: Long, typeId: Long): List<String>
+    suspend fun distinctCircuits(projectId: String, typeId: String): List<String>
 
-    @Query("SELECT * FROM debug_logs ORDER BY id")
+    @Query("SELECT * FROM debug_logs ORDER BY createdAt, id")
     suspend fun allOnce(): List<DebugLog>
 
     @Query("SELECT * FROM debug_logs WHERE id = :id")
-    suspend fun getByIdOnce(id: Long): DebugLog?
+    suspend fun getByIdOnce(id: String): DebugLog?
 
     @Query("SELECT COUNT(*) FROM debug_logs WHERE instanceId = :instanceId")
-    suspend fun countLogsOf(instanceId: Long): Int
+    suspend fun countLogsOf(instanceId: String): Int
 
     @Insert
-    suspend fun insert(l: DebugLog): Long
+    suspend fun insert(l: DebugLog)
 
     @Insert
     suspend fun insertAll(list: List<DebugLog>)
 
     @Update
     suspend fun update(l: DebugLog)
+
+    @Update
+    suspend fun updateAll(list: List<DebugLog>)
 
     @Delete
     suspend fun delete(l: DebugLog)
@@ -257,7 +269,7 @@ interface DebugLogDao {
 @Dao
 interface FaultRecordDao {
     @Query("SELECT * FROM fault_records WHERE logId = :logId ORDER BY occurredAt")
-    suspend fun forLogOnce(logId: Long): List<FaultRecord>
+    suspend fun forLogOnce(logId: String): List<FaultRecord>
 
     @Query(
         """SELECT f.*, p.name AS projectName, i.name AS instanceName, i.deviceCode AS deviceCode
@@ -269,21 +281,39 @@ interface FaultRecordDao {
     )
     suspend fun exportAll(): List<FaultExportRow>
 
-    @Query("SELECT * FROM fault_records ORDER BY id")
+    @Query("SELECT * FROM fault_records ORDER BY occurredAt, id")
     suspend fun allOnce(): List<FaultRecord>
 
     @Insert
-    suspend fun insert(f: FaultRecord): Long
+    suspend fun insert(f: FaultRecord)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAll(list: List<FaultRecord>)
 
     @Update
-    suspend fun update(f: FaultRecord)
+    suspend fun updateAll(list: List<FaultRecord>)
 
     @Query("DELETE FROM fault_records WHERE logId = :logId")
-    suspend fun deleteForLog(logId: Long)
+    suspend fun deleteForLog(logId: String)
 
     @Query("DELETE FROM fault_records")
     suspend fun wipe()
 
     @Query("SELECT COUNT(*) FROM fault_records WHERE status = 0")
     suspend fun countPending(): Int
+}
+
+@Dao
+interface TesterAccountDao {
+    @Query("SELECT * FROM tester_accounts ORDER BY createdAt")
+    suspend fun allOnce(): List<TesterAccount>
+
+    @Query("SELECT * FROM tester_accounts WHERE username = :username LIMIT 1")
+    suspend fun byUsername(username: String): TesterAccount?
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insert(a: TesterAccount)
+
+    @Query("UPDATE tester_accounts SET source = :source WHERE username = :username")
+    suspend fun updateSource(username: String, source: String)
 }

@@ -39,9 +39,9 @@ class LogListFragment : Fragment() {
     private var types: List<CabinetType> = emptyList()
     private var instances: List<CabinetInstance> = emptyList()
 
-    private var selProjectId = 0L
-    private var selTypeId = 0L
-    private var selInstanceId = 0L
+    private var selProjectId = ""
+    private var selTypeId = ""
+    private var selInstanceId = ""
     private var selStatus = -1
 
     private val handler = Handler(Looper.getMainLooper())
@@ -77,7 +77,7 @@ class LogListFragment : Fragment() {
 
         b.spStatus.adapter = ArrayAdapter(
             requireContext(),
-            android.R.layout.simple_spinner_item,
+            R.layout.spinner_item_small,
             arrayOf(
                 getString(R.string.filter_all_status),
                 getString(R.string.filter_pending),
@@ -94,7 +94,7 @@ class LogListFragment : Fragment() {
 
         b.fabNewLog.setOnClickListener {
             val intent = Intent(requireContext(), LogEditActivity::class.java)
-            if (selInstanceId > 0) intent.putExtra(LogEditActivity.KEY_INSTANCE_ID, selInstanceId)
+            if (selInstanceId.isNotEmpty()) intent.putExtra(LogEditActivity.KEY_INSTANCE_ID, selInstanceId)
             startActivity(intent)
         }
 
@@ -117,10 +117,10 @@ class LogListFragment : Fragment() {
         val labels = mutableListOf(getString(R.string.filter_all_projects))
         projects.forEach { labels.add(it.name) }
         b.spProject.bind(labels) { pos ->
-            val newId = projects.getOrNull(pos - 1)?.id ?: 0L
+            val newId = projects.getOrNull(pos - 1)?.id ?: ""
             if (newId != selProjectId) {
                 selProjectId = newId
-                selInstanceId = 0L
+                selInstanceId = ""
                 viewLifecycleOwner.lifecycleScope.launch { reloadInstances() }
             }
         }
@@ -131,10 +131,10 @@ class LogListFragment : Fragment() {
         val labels = mutableListOf(getString(R.string.filter_all_types))
         types.forEach { labels.add(it.name) }
         b.spType.bind(labels) { pos ->
-            val newId = types.getOrNull(pos - 1)?.id ?: 0L
+            val newId = types.getOrNull(pos - 1)?.id ?: ""
             if (newId != selTypeId) {
                 selTypeId = newId
-                selInstanceId = 0L
+                selInstanceId = ""
                 viewLifecycleOwner.lifecycleScope.launch { reloadInstances() }
             }
         }
@@ -146,7 +146,7 @@ class LogListFragment : Fragment() {
         val labels = mutableListOf(getString(R.string.filter_all_instances))
         instances.forEach { labels.add(it.name) }
         b.spInstance.bind(labels) { pos ->
-            val newId = instances.getOrNull(pos - 1)?.id ?: 0L
+            val newId = instances.getOrNull(pos - 1)?.id ?: ""
             if (newId != selInstanceId) {
                 selInstanceId = newId
                 reload()
@@ -193,7 +193,7 @@ class LogListFragment : Fragment() {
             .show()
     }
 
-    private fun logIntent(logId: Long) =
+    private fun logIntent(logId: String) =
         Intent(requireContext(), LogEditActivity::class.java)
             .putExtra(LogEditActivity.KEY_LOG_ID, logId)
 
@@ -201,7 +201,7 @@ class LogListFragment : Fragment() {
 
     private fun Spinner.bind(items: List<String>, onSel: (Int) -> Unit) {
         tag = true // 绑定与静默恢复期间忽略回调
-        adapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item, items).apply {
+        adapter = ArrayAdapter(requireContext(), R.layout.spinner_item_small, items).apply {
             setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         }
         onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
@@ -276,7 +276,9 @@ class LogAdapter(
 
         h.ib.tvContent.text = item.log.testContent
         val tester = item.log.tester.takeIf { it.isNotBlank() }?.let { " · 测试:$it" }.orEmpty()
-        h.ib.tvFooter.text = "${item.projectName} · ${item.typeName}$tester"
+        val author = item.log.createdBy.takeIf { it.isNotBlank() && it != item.log.tester }
+            ?.let { " · 记录:$it" }.orEmpty()
+        h.ib.tvFooter.text = "${item.projectName} · ${item.typeName}$tester$author"
 
         h.ib.root.setOnClickListener { onClick(item) }
         h.ib.root.setOnLongClickListener { onLongClick(item); true }

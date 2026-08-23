@@ -1,7 +1,6 @@
 package com.fieldlog.powerdebug.ui.log
 
 import android.app.AlertDialog
-import android.content.Intent
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -25,6 +24,10 @@ import com.fieldlog.powerdebug.databinding.ActivityLogEditBinding
 import com.fieldlog.powerdebug.databinding.DialogFaultBinding
 import com.fieldlog.powerdebug.databinding.ItemFaultDraftBinding
 import com.fieldlog.powerdebug.util.DT
+import com.fieldlog.powerdebug.util.SyncStore
+import com.fieldlog.powerdebug.util.WebDavSync
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 class LogEditActivity : AppCompatActivity() {
@@ -38,17 +41,17 @@ class LogEditActivity : AppCompatActivity() {
     private lateinit var b: ActivityLogEditBinding
 
     private var projects: List<Project> = emptyList()
-    private var typeNames: Map<Long, String> = emptyMap()
+    private var typeNames: Map<String, String> = emptyMap()
     private var curInstances: List<CabinetInstance> = emptyList()
 
-    private var selProjectId = 0L
-    private var selInstanceId = 0L
+    private var selProjectId = ""
+    private var selInstanceId = ""
 
     private var editing: LogListItem? = null
     private val drafts = mutableListOf<FaultRecord>()
 
     private var poolItems: List<CandidateItem> = emptyList()
-    private val checkedPool = mutableSetOf<Long>()
+    private val checkedPool = mutableSetOf<String>()
     private lateinit var poolAdapter: PoolAdapter
     private lateinit var faultAdapter: FaultDraftAdapter
 
@@ -118,7 +121,7 @@ class LogEditActivity : AppCompatActivity() {
                     val newId = projects.getOrNull(pos)?.id ?: return
                     if (newId != selProjectId && editing == null) {
                         selProjectId = newId
-                        selInstanceId = 0L
+                        selInstanceId = ""
                         lifecycleScope.launch { reloadInstances() }
                     }
                 }
@@ -127,7 +130,7 @@ class LogEditActivity : AppCompatActivity() {
             }
     }
 
-    private fun selectProjectSilently(projectId: Long) {
+    private fun selectProjectSilently(projectId: String) {
         val pos = projects.indexOfFirst { it.id == projectId }
         if (pos >= 0) {
             b.spProject.tag = true
@@ -172,7 +175,7 @@ class LogEditActivity : AppCompatActivity() {
 
     private suspend fun reloadPoolAndCircuits() {
         val typeId = currentTypeId()
-        poolItems = if (typeId > 0) App.db.candidateItemDao().byTypeOnce(typeId) else emptyList()
+        poolItems = if (typeId.isNotEmpty()) App.db.candidateItemDao().byTypeOnce(typeId) else emptyList()
         checkedPool.retainAll(poolItems.map { it.id }.toSet())
         poolAdapter.items = poolItems
         poolAdapter.notifyDataSetChanged()
@@ -184,14 +187,14 @@ class LogEditActivity : AppCompatActivity() {
         )
     }
 
-    private suspend fun currentTypeId(): Long =
-        App.repo.getInstance(selInstanceId)?.typeId ?: 0L
+    private suspend fun currentTypeId(): String =
+        App.repo.getInstance(selInstanceId)?.typeId ?: ""
 
     // ---------- 装载编辑数据 / 预选 ----------
 
     private suspend fun loadEditingOrPrefill() {
-        val logId = intent.getLongExtra(KEY_LOG_ID, -1L)
-        if (logId > 0) {
+        val logId = intent.getStringExtra(KEY_LOG_ID).orEmpty()
+        if (logId.isNotEmpty()) {
             editing = App.repo.getLogDetail(logId)
             val d = editing
             if (d == null) {
@@ -201,7 +204,7 @@ class LogEditActivity : AppCompatActivity() {
             b.toolbar.title = getString(R.string.log_edit_title)
             selInstanceId = d.log.instanceId
             val inst = App.repo.getInstance(d.log.instanceId)
-            selProjectId = inst?.projectId ?: 0L
+            selProjectId = inst?.projectId ?: ""
             selectProjectSilently(selProjectId)
 
             curInstances = App.db.instanceDao().byProjectOnce(selProjectId)
@@ -216,19 +219,25 @@ class LogEditActivity : AppCompatActivity() {
             b.etContent.setText(d.log.testContent)
             b.etTester.setText(d.log.tester)
             b.etRemark.setText(d.log.remark)
+
+            val creator = d.log.createdBy.ifEmpty { "-" }
+            val updator = d.log.updatedBy.ifEmpty { "-" }
+            b.tvMeta.visibility = View.VISIBLE
+            b.tvMeta.text = "创建账号：$creator · 最近修改：$updator"
+
             drafts.addAll(App.repo.faultsOf(d.log.id))
             faultAdapter.notifyDataSetChanged()
 
             reloadPoolAndCircuits()
         } else {
             b.toolbar.title = getString(R.string.log_new_title)
-            val pid = intent.getLongExtra(KEY_PROJECT_ID, 0L)
-            val iid = intent.getLongExtra(KEY_INSTANCE_ID, 0L)
-            selProjectId = if (pid > 0 && projects.any { it.id == pid }) pid
-            else projects.firstOrNull()?.id ?: 0L
+            val pid = intent.getStringExtra(KEY_PROJECT_ID).orEmpty()
+            val iid = intent.getStringExtra(KEY_INSTANCE_ID).orEmpty()
+            selProjectId = if (pid.isNotEmpty() && projects.any { it.id == pid }) pid
+            else projects.firstOrNull()?.id ?: ""
             selectProjectSilently(selProjectId)
 
-            if (iid > 0) {
+            if (iid.isNotEmpty()) {
                 val target = App.repo.getInstance(iid)
                 if (target != null && target.projectId != selProjectId) {
                     selProjectId = target.projectId
@@ -237,7 +246,12 @@ class LogEditActivity : AppCompatActivity() {
                 selInstanceId = iid
             } else {
                 selInstanceId =
-                    App.db.instanceDao().byProjectOnce(selProjectId).firstOrNull()?.id ?: 0L
+                    App.db.instanceDao().byProjectOnce(selProjectId).firstOrNull()?.id ?: ""
+            }
+
+            // 已登录测试员：测试人员栏自动绑定当前账号
+            if (b.etTester.text.isNullOrBlank()) {
+                SyncStore.currentUser(this)?.let { b.etTester.setText(it) }
             }
             reloadInstances()
         }
@@ -337,7 +351,7 @@ class LogEditActivity : AppCompatActivity() {
     // ---------- 保存 ----------
 
     private fun save() {
-        if (selInstanceId <= 0) {
+        if (selInstanceId.isEmpty()) {
             Toast.makeText(this, R.string.err_pick_instance, Toast.LENGTH_SHORT).show()
             return
         }
@@ -348,19 +362,28 @@ class LogEditActivity : AppCompatActivity() {
         }
         val old = editing?.log
         val log = DebugLog(
-            id = old?.id ?: 0L,
+            id = old?.id ?: "",
             instanceId = selInstanceId,
             circuit = b.actCircuit.text?.toString()?.trim().orEmpty(),
             testContent = content,
             tester = b.etTester.text?.toString()?.trim().orEmpty(),
             remark = b.etRemark.text?.toString()?.trim().orEmpty(),
+            createdBy = old?.createdBy.orEmpty(),
+            updatedBy = old?.updatedBy.orEmpty(),
             createdAt = old?.createdAt ?: System.currentTimeMillis(),
             updatedAt = System.currentTimeMillis()
         )
+        val actor = SyncStore.currentUser(this).orEmpty()
         lifecycleScope.launch {
             try {
-                App.repo.saveLog(log, drafts.toList())
+                App.repo.saveLog(log, drafts.toList(), actor)
                 Toast.makeText(this@LogEditActivity, R.string.saved_ok, Toast.LENGTH_SHORT).show()
+                // 自动上传：开关开启且已登录时静默推送快照，失败不打扰
+                if (SyncStore.autoUpload(this@LogEditActivity) && actor.isNotEmpty()) {
+                    CoroutineScope(Dispatchers.IO).launch {
+                        try { WebDavSync.uploadSnapshot(this@LogEditActivity) } catch (_: Exception) {}
+                    }
+                }
                 finish()
             } catch (e: Exception) {
                 Toast.makeText(this@LogEditActivity, "保存失败：${e.message}", Toast.LENGTH_LONG).show()
@@ -371,7 +394,7 @@ class LogEditActivity : AppCompatActivity() {
 
 // ---------- 候选池适配器 ----------
 
-private class PoolAdapter(private val checked: MutableSet<Long>) :
+private class PoolAdapter(private val checked: MutableSet<String>) :
     RecyclerView.Adapter<PoolAdapter.VH>() {
 
     var items: List<CandidateItem> = emptyList()

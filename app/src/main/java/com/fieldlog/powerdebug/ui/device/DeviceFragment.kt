@@ -118,7 +118,7 @@ class DeviceFragment : Fragment() {
                 viewLifecycleOwner.lifecycleScope.launch {
                     App.repo.saveProject(
                         com.fieldlog.powerdebug.data.db.Project(
-                            id = existing?.id ?: 0L, name = name,
+                            id = existing?.id.orEmpty(), name = name,
                             code = code, remark = remark,
                             createdAt = existing?.createdAt ?: System.currentTimeMillis()
                         )
@@ -176,7 +176,7 @@ class DeviceFragment : Fragment() {
                 viewLifecycleOwner.lifecycleScope.launch {
                     App.repo.saveType(
                         com.fieldlog.powerdebug.data.db.CabinetType(
-                            id = existing?.id ?: 0L, name = name, remark = remark,
+                            id = existing?.id.orEmpty(), name = name, remark = remark,
                             createdAt = existing?.createdAt ?: System.currentTimeMillis()
                         )
                     )

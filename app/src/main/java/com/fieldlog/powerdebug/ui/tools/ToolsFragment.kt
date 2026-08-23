@@ -1,22 +1,28 @@
 package com.fieldlog.powerdebug.ui.tools
 
+import android.app.AlertDialog
 import android.net.Uri
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.TextView
+import android.widget.EditText
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog.Builder
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.fieldlog.powerdebug.App
 import com.fieldlog.powerdebug.R
+import com.fieldlog.powerdebug.core.WebDavClient
 import com.fieldlog.powerdebug.core.XlsxWriter
 import com.fieldlog.powerdebug.data.Repository
 import com.fieldlog.powerdebug.data.db.FaultRecord
+import com.fieldlog.powerdebug.data.db.TesterAccount
 import com.fieldlog.powerdebug.databinding.FragmentToolsBinding
 import com.fieldlog.powerdebug.util.DT
+import com.fieldlog.powerdebug.util.SyncStore
+import com.fieldlog.powerdebug.util.WebDavSync
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -55,11 +61,27 @@ class ToolsFragment : Fragment() {
         b.btnRestore.setOnClickListener {
             restoreLauncher.launch(arrayOf(JSON_MIME, "text/*", "application/octet-stream"))
         }
+
+        // ---- 账号与同步 ----
+        b.btnLogin.setOnClickListener { showLoginDialog() }
+        b.btnSwitchUser.setOnClickListener { showSwitchUserDialog() }
+        b.btnLogout.setOnClickListener {
+            SyncStore.setCurrentUser(requireContext(), null)
+            refreshAccountUI()
+            Toast.makeText(requireContext(), R.string.sync_logged_out, Toast.LENGTH_SHORT).show()
+        }
+        b.swAutoUpload.isChecked = SyncStore.autoUpload(requireContext())
+        b.swAutoUpload.setOnCheckedChangeListener { _, checked ->
+            SyncStore.setAutoUpload(requireContext(), checked)
+        }
+        b.btnSyncUpload.setOnClickListener { syncUpload() }
+        b.btnSyncDownload.setOnClickListener { syncDownload() }
     }
 
     override fun onResume() {
         super.onResume()
         refreshStats()
+        refreshAccountUI()
     }
 
     override fun onDestroyView() {
@@ -67,13 +89,149 @@ class ToolsFragment : Fragment() {
         _b = null
     }
 
-    private fun refreshStats() {
+    // ---------- 账号状态展示 ----------
+
+    private fun refreshAccountUI() {
+        val ctx = requireContext()
+        val user = SyncStore.currentUser(ctx)
+        b.tvCurrentUser.text =
+            if (user == null) "当前测试员：${getString(R.string.not_logged_in)}（日志不记录归属账号）"
+            else "当前测试员：$user"
+        val cfg = SyncStore.config(ctx)
+        b.tvWebdavStatus.text =
+            if (cfg == null) "WebDAV：未配置（仅本地身份标记）"
+            else "WebDAV：${cfg.url}"
+    }
+
+    /** 登录/添加测试员。密码=超级口令 → 离线直接注册；否则走WebDAV验证 */
+    private fun showLoginDialog(existingUsername: String = "") {
+        val ctx = requireContext()
+        val dlgView = layoutInflater.inflate(R.layout.dialog_login, null)
+        val etServer = dlgView.findViewById<EditText>(R.id.etServer)
+        val etUser = dlgView.findViewById<EditText>(R.id.etUsername)
+        val etPass = dlgView.findViewById<EditText>(R.id.etPassword)
+
+        SyncStore.config(ctx)?.let {
+            etServer.setText(it.url); etUser.setText(it.user)
+        } ?: run { if (existingUsername.isNotEmpty()) etUser.setText(existingUsername) }
+
+        Builder(ctx)
+            .setTitle(R.string.sync_login)
+            .setView(dlgView)
+            .setPositiveButton(R.string.confirm) { _, _ ->
+                val username = etUser.text?.toString()?.trim().orEmpty()
+                val pass = etPass.text?.toString() ?: ""
+                if (username.isEmpty()) {
+                    toast("请输入账号"); return@setPositiveButton
+                }
+                if (pass == SyncStore.SUPER_PASSWORD) {
+                    lifecycleScope.launch {
+                        App.repo.registerTester(username, TesterAccount.SOURCE_SUPER)
+                        SyncStore.setCurrentUser(ctx, username)
+                        refreshAccountUI()
+                        toast(getString(R.string.sync_login_super, username))
+                    }
+                    return@setPositiveButton
+                }
+                val url = etServer.text?.toString()?.trim().orEmpty()
+                if (url.isEmpty()) {
+                    toast("请填写服务器地址，或使用超级口令"); return@setPositiveButton
+                }
+                toast(R.string.sync_verifying)
+                lifecycleScope.launch {
+                    try {
+                        withContext(Dispatchers.IO) {
+                            WebDavClient(url, username, pass).verify()
+                        }
+                        SyncStore.saveConfig(ctx, url, username, pass)
+                        App.repo.registerTester(username, TesterAccount.SOURCE_WEBDAV)
+                        SyncStore.setCurrentUser(ctx, username)
+                        refreshAccountUI()
+                        toast(getString(R.string.sync_login_ok, username))
+                    } catch (e: Exception) {
+                        toast(e.message ?: "验证失败")
+                    }
+                }
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    /** 从本机已沉淀的测试员中切换归属身份 */
+    private fun showSwitchUserDialog() {
+        lifecycleScope.launch {
+            val accounts = App.repo.testerAccounts()
+            if (accounts.isEmpty()) {
+                toast("暂无已注册测试员，请先登录")
+                return@launch
+            }
+            val names = accounts.map { it.username }.toTypedArray()
+            val cur = SyncStore.currentUser(requireContext())
+            val checked = names.indexOf(cur)
+            Builder(requireContext())
+                .setTitle(R.string.sync_switch)
+                .setSingleChoiceItems(names, checked) { dlg, which ->
+                    SyncStore.setCurrentUser(requireContext(), names[which])
+                    refreshAccountUI()
+                    dlg.dismiss()
+                }
+                .setNegativeButton(R.string.cancel, null)
+                .show()
+        }
+    }
+
+    // ---------- 同步 ----------
+
+    private fun syncUpload() {
+        val ctx = requireContext()
+        if (SyncStore.currentUser(ctx) == null) {
+            toast("请先登录测试账号"); return
+        }
+        toast("正在上传…")
         viewLifecycleOwner.lifecycleScope.launch {
-            val s = App.repo.stats()
-            b.statProjects.text = s.projects.toString()
-            b.statTypes.text = s.types.toString()
-            b.statLogs.text = s.logs.toString()
-            b.statPending.text = s.pendingFaults.toString()
+            try {
+                val name = WebDavSync.uploadSnapshot(ctx)
+                toast(getString(R.string.sync_upload_ok, name))
+            } catch (e: Exception) {
+                toast(e.message ?: "上传失败")
+            }
+        }
+    }
+
+    private fun syncDownload() {
+        val ctx = requireContext()
+        if (SyncStore.currentUser(ctx) == null) {
+            toast("请先登录测试账号"); return
+        }
+        toast("正在下载…")
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val text = withContext(Dispatchers.IO) { WebDavSync.fetchRemote(ctx) }
+                val r = App.repo.mergePreview(text)
+                Builder(ctx)
+                    .setTitle(R.string.sync_merge_confirm_title)
+                    .setMessage(getString(R.string.sync_merge_confirm_msg,
+                        r.newProjects, r.updProjects,
+                        r.newTypes, r.updTypes,
+                        r.newInstances, r.updInstances,
+                        r.newLogs, r.updLogs,
+                        r.newFaults, r.updFaults))
+                    .setPositiveButton(R.string.confirm) { _, _ ->
+                        viewLifecycleOwner.lifecycleScope.launch {
+                            try {
+                                App.repo.mergeJson(text)
+                                toast(R.string.sync_merge_done)
+                                refreshStats()
+                            } catch (e: Exception) {
+                                toast(e.message ?: "合并失败")
+                            }
+                        }
+                    }
+                    .setNegativeButton(R.string.cancel, null)
+                    .show()
+            } catch (e: Exception) {
+                toast(e.message ?: "下载失败")
+            }
         }
     }
 
@@ -81,6 +239,9 @@ class ToolsFragment : Fragment() {
 
     private fun toast(msg: String) =
         Toast.makeText(requireContext(), msg, Toast.LENGTH_LONG).show()
+
+    private fun toast(resId: Int) =
+        Toast.makeText(requireContext(), resId, Toast.LENGTH_LONG).show()
 
     private fun doExport(uri: Uri) {
         viewLifecycleOwner.lifecycleScope.launch {
@@ -115,6 +276,8 @@ class ToolsFragment : Fragment() {
                 it.log.tester,
                 it.log.remark,
                 if (it.installer.isBlank()) "" else "${it.installer}",
+                it.log.createdBy,
+                it.log.updatedBy,
                 it.pendingCount.toString(),
                 it.resolvedCount.toString(),
                 DT.full(it.log.createdAt),
@@ -146,7 +309,7 @@ class ToolsFragment : Fragment() {
                 name = "调试日志",
                 headers = listOf(
                     "序号", "项目", "柜子类型", "实例名称", "设备编号", "回路",
-                    "测试内容", "测试人员", "备注", "安装人员",
+                    "测试内容", "测试人员", "备注", "安装人员", "创建账号", "修改账号",
                     "待处理故障数", "已解决故障数", "记录时间", "更新时间"
                 ),
                 rows = logRows,
@@ -193,7 +356,7 @@ class ToolsFragment : Fragment() {
                 }
                 // 预解析统计，供确认弹窗展示
                 val counts = withContext(Dispatchers.Default) { previewBackup(text) }
-                android.app.AlertDialog.Builder(requireContext())
+                AlertDialog.Builder(requireContext())
                     .setTitle(R.string.restore_confirm_title)
                     .setIcon(android.R.drawable.ic_dialog_alert)
                     .setMessage(
@@ -216,7 +379,7 @@ class ToolsFragment : Fragment() {
                     .setNegativeButton(R.string.cancel, null)
                     .show()
             } catch (e: Exception) {
-                toast(getString(R.string.restore_bad_file))
+                toast(R.string.restore_bad_file)
             }
         }
     }
