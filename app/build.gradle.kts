@@ -12,8 +12,8 @@ android {
         applicationId = "com.fieldlog.powerdebug"
         minSdk = 28
         targetSdk = 34
-        versionCode = 3
-        versionName = "2.1"
+        versionCode = 4
+        versionName = "2.2"
     }
 
     signingConfigs {
@@ -58,6 +58,9 @@ dependencies {
     implementation("androidx.recyclerview:recyclerview:1.3.2")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+
+    // WebDAV需要PROPFIND等自定义HTTP动词，Android原生HttpURLConnection不支持，改用OkHttp
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     val room = "2.6.1"
     implementation("androidx.room:room-runtime:$room")
