@@ -45,19 +45,21 @@ class TypeDetailActivity : AppCompatActivity() {
 
         // 候选池
         val poolAdapter = PoolAdapter()
-        val rvPool = findViewById<RecyclerView>(R.id.rvPool)
+        val rvPool = findViewById<RecyclerView>(R.id.rv_pool)
         rvPool.layoutManager = LinearLayoutManager(this)
         rvPool.adapter = poolAdapter
 
-        App.db.candidateItemDao().watchByTypeAsFlow(typeId).observe(this) {
-            poolAdapter.submit(it)
-            findViewById<TextView>(R.id.tvPoolEmpty).visibility =
-                if (it.isEmpty()) View.VISIBLE else View.GONE
-            refreshInfo(it.size)
+        lifecycleScope.launch {
+            App.db.candidateItemDao().watchByTypeAsFlow(typeId).collect { list ->
+                poolAdapter.submit(list)
+                findViewById<TextView>(R.id.tv_pool_empty).visibility =
+                    if (list.isEmpty()) View.VISIBLE else View.GONE
+                refreshInfo(list.size)
+            }
         }
 
-        val etNewItem = findViewById<EditText>(R.id.etNewItem)
-        findViewById<View>(R.id.btnAddItem).setOnClickListener {
+        val etNewItem = findViewById<EditText>(R.id.et_new_item)
+        findViewById<View>(R.id.btn_add_item).setOnClickListener {
             val text = etNewItem.text?.toString()?.trim().orEmpty()
             if (text.isEmpty()) return@setOnClickListener
             etNewItem.setText("")
@@ -71,7 +73,7 @@ class TypeDetailActivity : AppCompatActivity() {
             }
         }
 
-        findViewById<View>(R.id.btnBatchImport).setOnClickListener {
+        findViewById<View>(R.id.btn_batch_import).setOnClickListener {
             val dlgView = layoutInflater.inflate(R.layout.dialog_input_multiline, null)
             dlgView.findViewById<TextView>(R.id.tv_prompt).setText(R.string.batch_import_hint)
             dlgView.findViewById<EditText>(R.id.et_input).hint = ""
@@ -97,14 +99,14 @@ class TypeDetailActivity : AppCompatActivity() {
 
         // 使用情况（只读）
         val usageAdapter = UsageAdapter()
-        val rvUsage = findViewById<RecyclerView>(R.id.rvUsage)
+        val rvUsage = findViewById<RecyclerView>(R.id.rv_usage)
         rvUsage.layoutManager = LinearLayoutManager(this)
         rvUsage.adapter = usageAdapter
 
         lifecycleScope.launch {
             val rows = App.repo.instanceUsageOfType(typeId)
             usageAdapter.submit(rows)
-            findViewById<TextView>(R.id.tvUsageEmpty).visibility =
+            findViewById<TextView>(R.id.tv_usage_empty).visibility =
                 if (rows.isEmpty()) View.VISIBLE else View.GONE
         }
     }
@@ -114,7 +116,7 @@ class TypeDetailActivity : AppCompatActivity() {
             val t = App.repo.getType(typeId) ?: return@launch
             supportActionBar?.title = t.name
             val usage = App.repo.instanceUsageOfType(typeId).size
-            findViewById<TextView>(R.id.tvTypeInfo).text =
+            findViewById<TextView>(R.id.tv_type_info).text =
                 getString(R.string.type_stat_fmt, itemCount, usage)
                     .let { s -> if (t.remark.isBlank()) s else "$s · ${t.remark}" }
         }

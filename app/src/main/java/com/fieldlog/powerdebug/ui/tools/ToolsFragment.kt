@@ -13,6 +13,7 @@ import androidx.lifecycle.lifecycleScope
 import com.fieldlog.powerdebug.App
 import com.fieldlog.powerdebug.R
 import com.fieldlog.powerdebug.core.XlsxWriter
+import com.fieldlog.powerdebug.data.Repository
 import com.fieldlog.powerdebug.data.db.FaultRecord
 import com.fieldlog.powerdebug.databinding.FragmentToolsBinding
 import com.fieldlog.powerdebug.util.DT
@@ -223,7 +224,7 @@ class ToolsFragment : Fragment() {
     /** 返回 [项目数, 类型数, 柜子数, 日志数, 故障数] */
     private fun previewBackup(text: String): IntArray {
         val root = org.json.JSONObject(text)
-        if (root.optString("app") != App.repo.BACKUP_APP_TAG) throw IllegalArgumentException("bad tag")
+        if (root.optString("app") != Repository.BACKUP_APP_TAG) throw IllegalArgumentException("bad tag")
         fun count(key: String): Int = root.optJSONArray(key)?.length() ?: 0
         return intArrayOf(
             count("projects"), count("cabinetTypes"), count("instances"),

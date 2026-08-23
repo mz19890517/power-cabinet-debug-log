@@ -29,11 +29,6 @@ class MainActivity : AppCompatActivity() {
             }
             true
         }
-        binding.fabNewLog.setOnClickListener {
-            startActivity(
-                android.content.Intent(this, com.fieldlog.powerdebug.ui.log.LogEditActivity::class.java)
-            )
-        }
     }
 
     private fun show(f: Fragment) {

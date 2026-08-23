@@ -48,13 +48,17 @@ class DeviceFragment : Fragment() {
         b.rvTypes.layoutManager = LinearLayoutManager(requireContext())
         b.rvTypes.adapter = typeAdapter
 
-        App.repo.watchProjectItems().observe(viewLifecycleOwner) {
-            projectAdapter.submit(it)
-            b.tvEmptyProjects.visibility = if (it.isEmpty()) View.VISIBLE else View.GONE
+        viewLifecycleOwner.lifecycleScope.launch {
+            App.repo.watchProjectItems().collect {
+                projectAdapter.submit(it)
+                b.tvEmptyProjects.visibility = if (it.isEmpty()) View.VISIBLE else View.GONE
+            }
         }
-        App.repo.watchTypeItems().observe(viewLifecycleOwner) {
-            typeAdapter.submit(it)
-            b.tvEmptyTypes.visibility = if (it.isEmpty()) View.VISIBLE else View.GONE
+        viewLifecycleOwner.lifecycleScope.launch {
+            App.repo.watchTypeItems().collect {
+                typeAdapter.submit(it)
+                b.tvEmptyTypes.visibility = if (it.isEmpty()) View.VISIBLE else View.GONE
+            }
         }
 
         b.btnAddProject.setOnClickListener { editProjectDialog(null) }
@@ -216,19 +220,16 @@ private class ProjectAdapter(
     override fun getItemCount() = data.size
 
     override fun onBindViewHolder(h: VH, pos: Int) {
-        val it = data[pos]
-        h.ib.tvName.text = it.project.name
+        val item = data[pos]
+        h.ib.tvName.text = item.project.name
         h.ib.tvSub.text = buildString {
-            append(getString2(h, R.string.cabinets_fmt, it.cabinetCount, it.logCount))
-            if (it.project.code.isNotBlank()) append(" · ${it.project.code}")
-            if (it.project.remark.isNotBlank()) append(" · ${it.project.remark}")
+            append(h.ib.root.context.getString(R.string.cabinets_fmt, item.cabinetCount, item.logCount))
+            if (item.project.code.isNotBlank()) append(" · ${item.project.code}")
+            if (item.project.remark.isNotBlank()) append(" · ${item.project.remark}")
         }
-        h.ib.root.setOnClickListener { onClick(it) }
-        h.ib.root.setOnLongClickListener { onLongClick(it); true }
+        h.ib.root.setOnClickListener { onClick(item) }
+        h.ib.root.setOnLongClickListener { onLongClick(item); true }
     }
-
-    private fun getString2(h: VH, res: Int, a: Int, bb: Int): String =
-        h.ib.root.context.getString(res, a, bb)
 }
 
 private class TypeAdapter(
@@ -250,12 +251,12 @@ private class TypeAdapter(
     override fun getItemCount() = data.size
 
     override fun onBindViewHolder(h: VH, pos: Int) {
-        val it = data[pos]
+        val item = data[pos]
         val ctx = h.ib.root.context
-        h.ib.tvName.text = it.type.name
-        h.ib.tvSub.text = ctx.getString(R.string.type_stat_fmt, it.itemCount, it.instanceCount)
-            .let { s -> if (it.type.remark.isBlank()) s else "$s · ${it.type.remark}" }
-        h.ib.root.setOnClickListener { onClick(it) }
-        h.ib.root.setOnLongClickListener { onLongClick(it); true }
+        h.ib.tvName.text = item.type.name
+        h.ib.tvSub.text = ctx.getString(R.string.type_stat_fmt, item.itemCount, item.instanceCount)
+            .let { s -> if (item.type.remark.isBlank()) s else "$s · ${item.type.remark}" }
+        h.ib.root.setOnClickListener { onClick(item) }
+        h.ib.root.setOnLongClickListener { onLongClick(item); true }
     }
 }

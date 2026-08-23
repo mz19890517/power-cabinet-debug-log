@@ -62,13 +62,17 @@ class LogListFragment : Fragment() {
         b.rvLogs.layoutManager = LinearLayoutManager(requireContext())
         b.rvLogs.adapter = adapter
 
-        App.repo.watchProjects().observe(viewLifecycleOwner) {
-            projects = it
-            refreshProjectSpinner()
+        viewLifecycleOwner.lifecycleScope.launch {
+            App.repo.watchProjects().collect {
+                projects = it
+                refreshProjectSpinner()
+            }
         }
-        App.repo.watchTypes().observe(viewLifecycleOwner) {
-            types = it
-            refreshTypeSpinner()
+        viewLifecycleOwner.lifecycleScope.launch {
+            App.repo.watchTypes().collect {
+                types = it
+                refreshTypeSpinner()
+            }
         }
 
         b.spStatus.adapter = ArrayAdapter(
@@ -87,6 +91,12 @@ class LogListFragment : Fragment() {
 
         b.etCircuitFilter.addTextChangedListener(debounceWatcher)
         b.etTextSearch.addTextChangedListener(debounceWatcher)
+
+        b.fabNewLog.setOnClickListener {
+            val intent = Intent(requireContext(), LogEditActivity::class.java)
+            if (selInstanceId > 0) intent.putExtra(LogEditActivity.KEY_INSTANCE_ID, selInstanceId)
+            startActivity(intent)
+        }
 
         viewLifecycleOwner.lifecycleScope.launch { reloadInstances() }
     }

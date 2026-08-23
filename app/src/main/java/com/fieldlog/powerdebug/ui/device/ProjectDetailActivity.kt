@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
+import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
@@ -53,17 +54,19 @@ class ProjectDetailActivity : AppCompatActivity() {
             onClick = { showInstanceDialog(it) },
             onLongClick = { showInstanceMenu(it) }
         )
-        val rv = findViewById<RecyclerView>(R.id.rvInstances)
+        val rv = findViewById<RecyclerView>(R.id.rv_instances)
         rv.layoutManager = LinearLayoutManager(this)
         rv.adapter = adapter
 
-        findViewById<View>(R.id.btnAddInstance).setOnClickListener { showInstanceDialog(null) }
+        findViewById<View>(R.id.btn_add_instance).setOnClickListener { showInstanceDialog(null) }
 
-        App.db.instanceDao().watchByProjectAsFlow(projectId).observe(this) {
-            adapter.submit(it)
-            findViewById<TextView>(R.id.tvEmptyInstances).visibility =
-                if (it.isEmpty()) View.VISIBLE else View.GONE
-            refreshHeader()
+        lifecycleScope.launch {
+            App.db.instanceDao().watchByProjectAsFlow(projectId).collect { list ->
+                adapter.submit(list)
+                findViewById<TextView>(R.id.tv_empty_instances).visibility =
+                    if (list.isEmpty()) View.VISIBLE else View.GONE
+                refreshHeader()
+            }
         }
 
         lifecycleScope.launch {
@@ -75,7 +78,7 @@ class ProjectDetailActivity : AppCompatActivity() {
 
     private fun refreshHeader() {
         val p = project ?: return
-        findViewById<TextView>(R.id.tvProjectInfo).text = buildString {
+        findViewById<TextView>(R.id.tv_project_info).text = buildString {
             appendLine("项目：${p.name}")
             if (p.code.isNotBlank()) appendLine("工程编号：${p.code}")
             if (p.remark.isNotBlank()) appendLine("备注：${p.remark}")
@@ -260,16 +263,16 @@ class ProjectDetailActivity : AppCompatActivity() {
         override fun getItemCount() = data.size
 
         override fun onBindViewHolder(h: VH, pos: Int) {
-            val it = data[pos]
-            h.ib.tvName.text = it.name
+            val item = data[pos]
+            h.ib.tvName.text = item.name
             h.ib.tvSub.text = buildString {
-                append(typeNames[it.typeId].orEmpty())
-                if (it.deviceCode.isNotBlank()) append(" · 编号:${it.deviceCode}")
-                if (it.location.isNotBlank()) append(" · ${it.location}")
-                if (it.installer.isNotBlank()) append(" · 安装:${it.installer}")
+                append(typeNames[item.typeId].orEmpty())
+                if (item.deviceCode.isNotBlank()) append(" · 编号:${item.deviceCode}")
+                if (item.location.isNotBlank()) append(" · ${item.location}")
+                if (item.installer.isNotBlank()) append(" · 安装:${item.installer}")
             }
-            h.ib.root.setOnClickListener { onClick(it) }
-            h.ib.root.setOnLongClickListener { onLongClick(it); true }
+            h.ib.root.setOnClickListener { onClick(item) }
+            h.ib.root.setOnLongClickListener { onLongClick(item); true }
         }
     }
 }

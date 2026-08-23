@@ -207,13 +207,16 @@ object XlsxWriter {
     }
 
     /** 可视宽度：中日韩全角字符按 2 计 */
-    private fun visualWidth(s: String): Int = s.sumOf { ch ->
-        if (Character.UnicodeBlock.of(ch)?.let {
-                it == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS ||
-                    it == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS ||
-                    it == Character.UnicodeBlock.HALFWIDTH_AND_FULLWIDTH_FORMS ||
-                    it == Character.UnicodeBlock.CJK_SYMBOLS_AND_PUNCTUATION
-            } == true
-        ) 2 else 1
+    private fun visualWidth(s: String): Int {
+        var w = 0
+        for (ch in s) {
+            val block = Character.UnicodeBlock.of(ch)
+            val wide = block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS ||
+                block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS ||
+                block == Character.UnicodeBlock.HALFWIDTH_AND_FULLWIDTH_FORMS ||
+                block == Character.UnicodeBlock.CJK_SYMBOLS_AND_PUNCTUATION
+            w += if (wide) 2 else 1
+        }
+        return w
     }
 }
