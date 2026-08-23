@@ -248,6 +248,9 @@ class Repository(private val db: AppDatabase) {
                 val hits = plannedDao.pendingForTestOnce(saved.instanceId)
                     .filter { normLine(it.content) in lines }
                 if (hits.isNotEmpty()) {
+                    // 命中项若上次是"未通过"，其关联故障随本次通过自动解决
+                    val prevFaults = hits.map { it.faultId }.filter { it.isNotEmpty() }
+                    if (prevFaults.isNotEmpty()) faultDao.resolveByIds(prevFaults, t)
                     plannedDao.setResult(hits.map { it.id }, PlannedItem.RESULT_PASS, t, saved.id, "")
                     markedCount = hits.size
                 }
@@ -311,7 +314,8 @@ class Repository(private val db: AppDatabase) {
     /**
      * 「开始测试」保存：✓通过项与✗未通过项合并为同一条日志（每行一项，整柜回路留空），
      * 未通过项逐个生成故障记录（现象=现场必填内容，状态待处理）挂到日志下；
-     * 测试员优先取输入值、否则取当前登录账号；同时候选池沉淀。
+     * 复测通过的项若上次有未解决故障 → 自动标记已解决；
+     * 测试人员必须来自调试员名单（调用方传入当前调试员），绝不回落到登录账号；同时候选池沉淀。
      * @param failedItems 未通过项：预选项id to 故障现象（必填）
      * @return 新日志id
      */
@@ -325,6 +329,7 @@ class Repository(private val db: AppDatabase) {
         val inst = instanceDao.getByIdOnce(instanceId)
             ?: throw IllegalArgumentException("柜子实例不存在")
         require(passIds.isNotEmpty() || failedItems.isNotEmpty()) { "未勾选任何测试项" }
+        require(testerInput.isNotBlank()) { "请先绑定调试员" }
         val t = now()
         var outId = ""
         db.withTransaction {
@@ -332,18 +337,23 @@ class Repository(private val db: AppDatabase) {
             val items = plannedDao.byIdsOnce(allIds).filter { it.instanceId == instanceId }
             require(items.isNotEmpty()) { "预选项目不存在" }
             val content = items.sortedBy { it.createdAt }.joinToString("\n") { it.content }
-            val tester = testerInput.trim().ifEmpty { actor }
             val log = DebugLog(
                 id = newId(), instanceId = instanceId, circuit = "",
-                testContent = content, tester = tester, remark = "",
+                testContent = content, tester = testerInput.trim(), remark = "",
                 createdBy = actor, updatedBy = actor, createdAt = t, updatedAt = t
             )
             logDao.insert(log)
 
-            // 通过项批量标记；未通过项先生成故障记录再逐项标记并关联
-            val passHitIds = items.filter { it.id in passIds.toSet() }.map { it.id }
-            if (passHitIds.isNotEmpty())
+            // 通过项批量标记；复测通过项的旧故障自动解决；
+            // 未通过项先生成故障记录再逐项标记并关联
+            val passSet = passIds.toSet()
+            val passHitIds = items.filter { it.id in passSet }.map { it.id }
+            if (passHitIds.isNotEmpty()) {
+                val prevFaults = items.filter { it.id in passSet && it.faultId.isNotEmpty() }
+                    .map { it.faultId }.distinct()
+                if (prevFaults.isNotEmpty()) faultDao.resolveByIds(prevFaults, t)
                 plannedDao.setResult(passHitIds, PlannedItem.RESULT_PASS, t, log.id, "")
+            }
             failedItems.forEach { (itemId, symptom) ->
                 val item = items.firstOrNull { it.id == itemId } ?: return@forEach
                 val f = FaultRecord(
@@ -425,6 +435,26 @@ class Repository(private val db: AppDatabase) {
 
     suspend fun collectExport(): Pair<List<LogListItem>, List<FaultExportRow>> =
         logDao.exportAll() to faultDao.exportAll()
+
+    /**
+     * 范围导出：按项目（全部柜子）或单个柜子过滤日志与故障。
+     * 两个参数都为空 = 全量导出。用于项目卡/柜子长按菜单的定向导出。
+     */
+    suspend fun collectExportOf(projectId: String = "", instanceId: String = ""):
+        Pair<List<LogListItem>, List<FaultExportRow>> {
+        val (logs, faults) = collectExport()
+        if (projectId.isBlank() && instanceId.isBlank()) return logs to faults
+        // LogListItem 无 projectId 字段，经实例归属换算
+        val instIds = if (projectId.isNotBlank())
+            instanceDao.byProjectOnce(projectId).map { it.id }.toSet() else null
+        val ls = logs.filter {
+            (instIds == null || it.log.instanceId in instIds) &&
+                (instanceId.isBlank() || it.log.instanceId == instanceId)
+        }
+        val logIds = ls.map { it.log.id }.toSet()
+        val fs = faults.filter { it.fault.logId in logIds }
+        return ls to fs
+    }
 
     companion object {
         const val BACKUP_APP_TAG = "power-debug-log"

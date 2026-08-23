@@ -259,6 +259,8 @@ class LogEditActivity : AppCompatActivity() {
                 .setTitle(R.string.tester_pick_title)
                 .setSingleChoiceItems(names.toTypedArray(), checked) { dlg, which ->
                     b.etTester.setText(names[which])
+                    // 选择即切换本机当前调试员
+                    SyncStore.setCurrentDebugger(this@LogEditActivity, names[which])
                     dlg.dismiss()
                 }
                 .setNegativeButton(R.string.cancel, null)
@@ -332,9 +334,9 @@ class LogEditActivity : AppCompatActivity() {
                     App.db.instanceDao().byProjectOnce(selProjectId).firstOrNull()?.id ?: ""
             }
 
-            // 测试人员：默认带出最近一次使用的调试员（不再绑定登录账号），点击可换人
+            // 测试人员：默认当前绑定的调试员（与登录账号无关），点击可换人
             if (b.etTester.text.isNullOrBlank()) {
-                b.etTester.setText(SyncStore.lastDebugger(this))
+                b.etTester.setText(SyncStore.currentDebugger(this))
             }
             b.etTester.setOnClickListener { showTesterPicker() }
             reloadInstances()
@@ -462,7 +464,7 @@ class LogEditActivity : AppCompatActivity() {
             try {
                 val marked = App.repo.saveLog(log, drafts.toList(), actor)
                 // 记住本次使用的调试员，下次写日志默认带出
-                if (log.tester.isNotBlank()) SyncStore.setLastDebugger(this@LogEditActivity, log.tester)
+                if (log.tester.isNotBlank()) SyncStore.setCurrentDebugger(this@LogEditActivity, log.tester)
                 if (marked > 0) {
                     Toast.makeText(
                         this@LogEditActivity,

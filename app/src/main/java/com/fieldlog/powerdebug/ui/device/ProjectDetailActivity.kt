@@ -4,6 +4,7 @@ import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
+import android.net.Uri
 import android.os.Bundle
 import android.text.SpannableStringBuilder
 import android.text.style.ForegroundColorSpan
@@ -14,24 +15,33 @@ import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.fieldlog.powerdebug.App
 import com.fieldlog.powerdebug.R
+import com.fieldlog.powerdebug.core.ExportSheets
+import com.fieldlog.powerdebug.core.XlsxWriter
 import com.fieldlog.powerdebug.data.db.InstanceStatusRow
 import com.fieldlog.powerdebug.data.db.Project
 import com.fieldlog.powerdebug.databinding.ItemSimpleCardBinding
 import com.fieldlog.powerdebug.ui.log.LogEditActivity
 import com.fieldlog.powerdebug.ui.test.PlannedManageActivity
 import com.fieldlog.powerdebug.ui.test.TestChecklistActivity
+import com.fieldlog.powerdebug.util.DT
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class ProjectDetailActivity : AppCompatActivity() {
 
     companion object {
         const val KEY_PROJECT_ID = "project_id"
+        private const val XLSX_MIME =
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
         fun intent(ctx: Context, projectId: String) =
             Intent(ctx, ProjectDetailActivity::class.java).putExtra(KEY_PROJECT_ID, projectId)
     }
@@ -41,6 +51,12 @@ class ProjectDetailActivity : AppCompatActivity() {
     private var typeNames: Map<String, String> = emptyMap()
     private var project: Project? = null
     private var latestRows: List<InstanceStatusRow> = emptyList()
+
+    /** 单柜日志导出（长按菜单入口） */
+    private var exportInstanceId = ""
+    private val exportLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument(XLSX_MIME)
+    ) { uri -> uri?.let { doExportInstance(it) } }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -57,7 +73,7 @@ class ProjectDetailActivity : AppCompatActivity() {
         }
 
         adapter = InstanceAdapter(
-            onClick = { showInstanceDialog(it.instance) },
+            onClick = { routeInstanceClick(it.instance) },
             onLongClick = { showInstanceMenu(it.instance) }
         )
         val rv = findViewById<RecyclerView>(R.id.rv_instances)
@@ -163,30 +179,76 @@ class ProjectDetailActivity : AppCompatActivity() {
 
     // ---------- 柜子实例 ----------
 
+    /**
+     * 单击柜子：已有启用的测试项目 → 直接开始调试；
+     * 还没建过清单 → 提示并先跳「预选待测」。
+     */
+    private fun routeInstanceClick(inst: com.fieldlog.powerdebug.data.db.CabinetInstance) {
+        lifecycleScope.launch {
+            val hasItems = App.db.plannedItemDao().allOfInstanceOnce(inst.id).any { it.enabled }
+            if (hasItems) {
+                startActivity(TestChecklistActivity.intent(this@ProjectDetailActivity, inst.id))
+            } else {
+                Toast.makeText(this@ProjectDetailActivity, R.string.planned_first_hint, Toast.LENGTH_SHORT).show()
+                startActivity(PlannedManageActivity.intent(this@ProjectDetailActivity, inst.id))
+            }
+        }
+    }
+
     private fun showInstanceMenu(inst: com.fieldlog.powerdebug.data.db.CabinetInstance) {
         AlertDialog.Builder(this)
             .setTitle(inst.name)
             .setItems(
                 arrayOf(
-                    getString(R.string.menu_start_test),
+                    getString(R.string.menu_edit_instance),
                     getString(R.string.menu_manage_planned),
                     getString(R.string.menu_log_new_here),
+                    getString(R.string.menu_export_instance),
                     getString(R.string.delete)
                 )
             ) { _, which ->
                 when (which) {
-                    0 -> startActivity(TestChecklistActivity.intent(this, inst.id))
+                    0 -> showInstanceDialog(inst)
                     1 -> startActivity(PlannedManageActivity.intent(this, inst.id))
                     2 -> startActivity(
                         Intent(this, LogEditActivity::class.java)
                             .putExtra(LogEditActivity.KEY_INSTANCE_ID, inst.id)
                             .putExtra(LogEditActivity.KEY_PROJECT_ID, projectId)
                     )
-
-                    3 -> confirmDeleteInstance(inst)
+                    3 -> requestExportInstance(inst)
+                    4 -> confirmDeleteInstance(inst)
                 }
             }
             .show()
+    }
+
+    private fun requestExportInstance(inst: com.fieldlog.powerdebug.data.db.CabinetInstance) {
+        exportInstanceId = inst.id
+        exportLauncher.launch("电源柜调试日志_${inst.name}_${DT.fileStamp()}.xlsx")
+    }
+
+    private fun doExportInstance(uri: Uri) {
+        lifecycleScope.launch {
+            try {
+                val (logs, faults) = App.repo.collectExportOf(instanceId = exportInstanceId)
+                withContext(Dispatchers.IO) {
+                    contentResolver.openOutputStream(uri)?.use { out ->
+                        XlsxWriter.write(out, ExportSheets.build(this@ProjectDetailActivity, logs, faults))
+                    } ?: throw IllegalStateException("无法打开输出流")
+                }
+                Toast.makeText(
+                    this@ProjectDetailActivity,
+                    getString(R.string.export_ok, uri.lastPathSegment ?: ""),
+                    Toast.LENGTH_LONG
+                ).show()
+            } catch (e: Exception) {
+                Toast.makeText(
+                    this@ProjectDetailActivity,
+                    getString(R.string.op_failed, e.message ?: e.javaClass.simpleName),
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
     }
 
     private fun confirmDeleteInstance(inst: com.fieldlog.powerdebug.data.db.CabinetInstance) {

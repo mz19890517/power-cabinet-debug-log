@@ -317,6 +317,13 @@ interface FaultRecordDao {
     @Query("DELETE FROM fault_records WHERE logId = :logId")
     suspend fun deleteForLog(logId: String)
 
+    /** 批量标记解决（复测通过时自动销掉关联的未解决故障） */
+    @Query(
+        "UPDATE fault_records SET status = 1, resolvedAt = :t, updatedAt = :t " +
+            "WHERE id IN (:ids) AND status = 0"
+    )
+    suspend fun resolveByIds(ids: List<String>, t: Long)
+
     @Query("DELETE FROM fault_records")
     suspend fun wipe()
 

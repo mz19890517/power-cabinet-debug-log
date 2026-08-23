@@ -35,7 +35,7 @@
 projects → cabinet_types(候选池 candidate_items) → cabinet_instances → debug_logs → fault_records
 planned_items：柜子实例的预选待测清单，三态 result（0未测/1通过/2未通过），未通过项复测✓才转绿。
 测试员账号 tester_accounts + WebDAV 团队互通（util/WebDavSync.kt，快照 backup_<账号>.json）。
-debuggers：调试员名单（v5新增），与登录账号无关，增/改/删全部要超级口令；日志测试人员默认带出最近用（SyncStore.lastDebugger），改名/删除不动历史日志。
+debuggers：调试员名单（v5新增），与登录账号无关，增/改/删全部要超级口令；本机「当前调试员」存SyncStore.currentDebugger（写日志自动归属、点击可切换），日志测试人员绝不回落到登录账号；改名/删除不动历史日志。复测✓时该项关联的未解决故障由Repository自动标记已解决（faultDao.resolveByIds）。
 
 ## 其他约定
 

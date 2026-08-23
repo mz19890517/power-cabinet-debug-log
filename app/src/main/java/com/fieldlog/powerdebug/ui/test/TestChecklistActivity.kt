@@ -20,6 +20,7 @@ import com.fieldlog.powerdebug.App
 import com.fieldlog.powerdebug.R
 import com.fieldlog.powerdebug.data.db.PlannedItem
 import com.fieldlog.powerdebug.ui.log.LogEditActivity
+import com.fieldlog.powerdebug.util.DT
 import com.fieldlog.powerdebug.util.SyncStore
 import kotlinx.coroutines.launch
 
@@ -39,9 +40,12 @@ class TestChecklistActivity : AppCompatActivity() {
     private val passIds = mutableSetOf<String>()
     private val failNotes = mutableMapOf<String, String>() // itemId -> 现场填写的故障现象
     private val lastReasons = mutableMapOf<String, String>() // 上次未通过的原因（faultId->symptom）
+    /** 已通过项（本次只读展示，不再操作） */
+    private val passedItems = mutableListOf<PlannedItem>()
     private lateinit var adapter: CheckAdapter
     private lateinit var tvCount: TextView
     private lateinit var btnGenerate: Button
+    private lateinit var tvInfo: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -54,7 +58,10 @@ class TestChecklistActivity : AppCompatActivity() {
         instanceId = intent.getStringExtra("instance_id").orEmpty()
         tvCount = findViewById(R.id.tv_count)
         btnGenerate = findViewById(R.id.btn_generate)
+        tvInfo = findViewById(R.id.tv_info)
         btnGenerate.setOnClickListener { confirmGenerate() }
+        // 头部信息行点击 = 切换当前调试员
+        tvInfo.setOnClickListener { showSwitchDebuggerDialog() }
 
         adapter = CheckAdapter()
         findViewById<RecyclerView>(R.id.rv_checks).apply {
@@ -65,30 +72,69 @@ class TestChecklistActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val inst = App.repo.getInstance(instanceId) ?: run { finish(); return@launch }
             supportActionBar?.title = "开始测试 · ${inst.name}"
-            findViewById<TextView>(R.id.tv_info).text =
-                getString(
-                    R.string.start_test_hint,
-                    inst.name,
-                    inst.deviceCode.ifBlank { getString(R.string.whole_cabinet) }
-                )
+            refreshInfo()
 
-            // 进入时对待办项做快照：未通过项继续出现，供复测
+            // 待办项：未通过继续出现供复测；已通过项只读展示
             val pending = App.db.plannedItemDao().pendingForTestOnce(instanceId)
+            passedItems.clear()
+            passedItems.addAll(
+                App.db.plannedItemDao().allOfInstanceOnce(instanceId)
+                    .filter { it.enabled && it.result == PlannedItem.RESULT_PASS }
+            )
             val faultIds = pending.map { it.faultId }.filter { it.isNotEmpty() }
             if (faultIds.isNotEmpty()) {
                 App.db.faultRecordDao().byIdsOnce(faultIds).forEach { lastReasons[it.id] = it.symptom }
             }
             adapter.submit(pending)
+            pendingTotal = pending.size
             findViewById<TextView>(R.id.tv_check_empty).visibility =
-                if (pending.isEmpty()) View.VISIBLE else View.GONE
+                if (pending.isEmpty() && passedItems.isEmpty()) View.VISIBLE else View.GONE
             findViewById<RecyclerView>(R.id.rv_checks).visibility =
-                if (pending.isEmpty()) View.GONE else View.VISIBLE
+                if (pending.isEmpty() && passedItems.isEmpty()) View.GONE else View.VISIBLE
             refreshCount()
         }
     }
 
+    /** 头部：柜子信息 + 当前调试员（点击切换） */
+    private fun refreshInfo() {
+        lifecycleScope.launch {
+            val inst = App.repo.getInstance(instanceId) ?: return@launch
+            val dbg = SyncStore.currentDebugger(this@TestChecklistActivity)
+            tvInfo.text = getString(
+                R.string.start_test_hint,
+                inst.name,
+                inst.deviceCode.ifBlank { getString(R.string.whole_cabinet) },
+                dbg.ifEmpty { getString(R.string.debugger_none_set) }
+            )
+        }
+    }
+
+    /** 多人绑定时切换当前调试员（无需超级口令） */
+    private fun showSwitchDebuggerDialog() {
+        lifecycleScope.launch {
+            val names = App.repo.debuggers().map { it.name }
+            if (names.isEmpty()) {
+                Toast.makeText(
+                    this@TestChecklistActivity,
+                    R.string.debugger_empty_hint, Toast.LENGTH_LONG
+                ).show()
+                return@launch
+            }
+            val cur = SyncStore.currentDebugger(this@TestChecklistActivity)
+            AlertDialog.Builder(this@TestChecklistActivity)
+                .setTitle(R.string.debugger_switch_title)
+                .setSingleChoiceItems(names.toTypedArray(), names.indexOf(cur)) { dlg, which ->
+                    SyncStore.setCurrentDebugger(this@TestChecklistActivity, names[which])
+                    refreshInfo()
+                    dlg.dismiss()
+                }
+                .setNegativeButton(R.string.cancel, null)
+                .show()
+        }
+    }
+
     private fun refreshCount() {
-        val total = adapter.itemCount
+        val total = pendingTotal
         tvCount.text = getString(
             R.string.check_count_fmt,
             passIds.size + failNotes.size, total, passIds.size, failNotes.size
@@ -96,19 +142,26 @@ class TestChecklistActivity : AppCompatActivity() {
         btnGenerate.isEnabled = passIds.isNotEmpty() || failNotes.isNotEmpty()
     }
 
+    private var pendingTotal = 0
+
+    /**
+     * 生成日志：不再弹窗填名，直接使用当前绑定的调试员（无感记录）。
+     * 未绑定调试员时提示先切换/绑定，绝不回落到登录账号。
+     */
     private fun confirmGenerate() {
-        val et = EditText(this).apply {
-            // 默认带出最近一次使用的调试员（与登录账号无关）
-            setText(SyncStore.lastDebugger(this@TestChecklistActivity))
-            hint = getString(R.string.tester_name)
+        val dbg = SyncStore.currentDebugger(this)
+        if (dbg.isBlank()) {
+            Toast.makeText(this, R.string.debugger_pick_first, Toast.LENGTH_LONG).show()
+            showSwitchDebuggerDialog()
+            return
         }
         AlertDialog.Builder(this)
             .setTitle(R.string.generate_log)
-            .setMessage(getString(R.string.generate_confirm_fmt, passIds.size + failNotes.size))
-            .setView(et)
-            .setPositiveButton(R.string.confirm) { _, _ ->
-                doGenerate(et.text?.toString()?.trim().orEmpty())
-            }
+            .setMessage(
+                getString(R.string.generate_confirm_fmt2, passIds.size + failNotes.size) +
+                    "\n" + getString(R.string.generate_as_debugger, dbg)
+            )
+            .setPositiveButton(R.string.confirm) { _, _ -> doGenerate(dbg) }
             .setNegativeButton(R.string.cancel, null)
             .show()
     }
@@ -123,10 +176,6 @@ class TestChecklistActivity : AppCompatActivity() {
                     testerInput,
                     SyncStore.currentUser(this@TestChecklistActivity).orEmpty()
                 )
-                // 记住本次使用的调试员
-                if (testerInput.isNotBlank()) {
-                    SyncStore.setLastDebugger(this@TestChecklistActivity, testerInput)
-                }
                 Toast.makeText(this@TestChecklistActivity, R.string.log_generated, Toast.LENGTH_SHORT).show()
                 // 生成后追问是否立即登记/补充故障
                 AlertDialog.Builder(this@TestChecklistActivity)
@@ -188,9 +237,25 @@ class TestChecklistActivity : AppCompatActivity() {
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) =
             CheckVH(LayoutInflater.from(parent.context).inflate(R.layout.item_check, parent, false))
 
-        override fun getItemCount() = data.size
+        // 待办项在前，已通过只读项在后
+        override fun getItemCount() = data.size + passedItems.size
 
         override fun onBindViewHolder(h: CheckVH, pos: Int) {
+            if (pos >= data.size) {
+                val p = passedItems[pos - data.size]
+                h.tvText.text = p.content
+                h.tvText.setTextColor(Color.parseColor("#2E7D32"))
+                h.tvReason.visibility = View.VISIBLE
+                h.tvReason.text =
+                    if (p.doneAt > 0) getString(R.string.planned_passed_at_fmt, DT.full(p.doneAt))
+                    else getString(R.string.planned_passed)
+                h.btnPass.visibility = View.GONE
+                h.btnFail.visibility = View.GONE
+                return
+            }
+            h.btnPass.visibility = View.VISIBLE
+            h.btnFail.visibility = View.VISIBLE
+
             val item = data[pos]
             val markedPass = item.id in passIds
             val markedFail = item.id in failNotes

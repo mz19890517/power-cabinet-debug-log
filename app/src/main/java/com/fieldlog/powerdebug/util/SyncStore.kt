@@ -53,11 +53,14 @@ object SyncStore {
         prefs(ctx).edit().putString(K_CURRENT, user.orEmpty()).apply()
     }
 
-    /** 最近一次写日志使用的调试员姓名（测试人员栏默认带出，与登录账号无关） */
-    fun lastDebugger(ctx: Context): String =
+    /**
+     * 当前调试员（写日志默认归属，必须来自超管维护的名单，与登录账号无关）。
+     * 多人绑定时可随时切换；存盘后自动跟随最后一次使用的人。
+     */
+    fun currentDebugger(ctx: Context): String =
         prefs(ctx).getString(K_LAST_DEBUGGER, "").orEmpty()
 
-    fun setLastDebugger(ctx: Context, name: String) {
+    fun setCurrentDebugger(ctx: Context, name: String) {
         prefs(ctx).edit().putString(K_LAST_DEBUGGER, name.trim()).apply()
     }
 

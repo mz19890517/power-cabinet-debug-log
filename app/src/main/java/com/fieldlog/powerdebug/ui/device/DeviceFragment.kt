@@ -6,17 +6,24 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.fieldlog.powerdebug.App
 import com.fieldlog.powerdebug.R
+import com.fieldlog.powerdebug.core.ExportSheets
+import com.fieldlog.powerdebug.core.XlsxWriter
 import com.fieldlog.powerdebug.data.db.ProjectListItem
 import com.fieldlog.powerdebug.data.db.TypeListItem
 import com.fieldlog.powerdebug.databinding.FragmentDeviceBinding
 import com.fieldlog.powerdebug.databinding.ItemSimpleCardBinding
+import com.fieldlog.powerdebug.util.DT
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class DeviceFragment : Fragment() {
 
@@ -86,13 +93,56 @@ class DeviceFragment : Fragment() {
     private fun showProjectMenu(item: ProjectListItem) {
         AlertDialog.Builder(requireContext())
             .setTitle(item.project.name)
-            .setItems(arrayOf(getString(R.string.edit_project), getString(R.string.delete))) { _, which ->
+            .setItems(
+                arrayOf(
+                    getString(R.string.edit_project),
+                    getString(R.string.menu_export_project),
+                    getString(R.string.delete)
+                )
+            ) { _, which ->
                 when (which) {
                     0 -> editProjectDialog(item.project)
-                    1 -> confirmDeleteProject(item)
+                    1 -> requestExportProject(item)
+                    2 -> confirmDeleteProject(item)
                 }
             }
             .show()
+    }
+
+    // ---------- 项目定向导出 ----------
+
+    private var exportProjectId = ""
+    private val exportLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument(XLSX_MIME)
+    ) { uri -> uri?.let { doExportProject(it) } }
+
+    private fun requestExportProject(item: ProjectListItem) {
+        exportProjectId = item.project.id
+        exportLauncher.launch("电源柜调试日志_${item.project.name}_${DT.fileStamp()}.xlsx")
+    }
+
+    private fun doExportProject(uri: android.net.Uri) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val (logs, faults) = App.repo.collectExportOf(projectId = exportProjectId)
+                withContext(Dispatchers.IO) {
+                    requireContext().contentResolver.openOutputStream(uri)?.use { out ->
+                        XlsxWriter.write(out, ExportSheets.build(requireContext(), logs, faults))
+                    } ?: throw IllegalStateException("无法打开输出流")
+                }
+                Toast.makeText(
+                    requireContext(),
+                    getString(R.string.export_ok, uri.lastPathSegment ?: ""),
+                    Toast.LENGTH_LONG
+                ).show()
+            } catch (e: Exception) {
+                Toast.makeText(
+                    requireContext(),
+                    getString(R.string.op_failed, e.message ?: e.javaClass.simpleName),
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
     }
 
     private fun editProjectDialog(existing: com.fieldlog.powerdebug.data.db.Project?) {
@@ -196,6 +246,11 @@ class DeviceFragment : Fragment() {
             }
             .setNegativeButton(R.string.cancel, null)
             .show()
+    }
+
+    companion object {
+        private const val XLSX_MIME =
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     }
 }
 
