@@ -167,9 +167,21 @@ class ToolsFragment : Fragment() {
 
         fun tryLoginOrShowDiag() {
             val username = etUser.text?.toString()?.trim().orEmpty()
-            val pass = etPass.text?.toString() ?: ""
-            if (username.isEmpty()) { toast("请输入账号"); return }
-            if (pass == SyncStore.SUPER_PASSWORD) {
+            val pass = etPass.text?.toString()?.trim() ?: ""
+            val isSuper = pass == SyncStore.SUPER_PASSWORD
+
+            fun showTip(msg: String) {
+                tvDiag.visibility = View.VISIBLE
+                tvDiag.text = msg
+            }
+
+            // 超级口令优先判定（trim后精确匹配），无需服务器地址
+            if (isSuper) {
+                if (username.isEmpty()) {
+                    showTip("✅ 已识别超级口令。\n请再在「账号」栏填写要注册的测试员姓名（如：张三），然后点「确认」，即在本机注册该测试员身份（离线可用，不上传）。\n注：超级口令的作用就是免服务器注册测试员，没有单独的管理界面。")
+                    etUser.requestFocus()
+                    return
+                }
                 lifecycleScope.launch {
                     App.repo.registerTester(username, TesterAccount.SOURCE_SUPER)
                     SyncStore.setCurrentUser(ctx, username)
@@ -179,9 +191,15 @@ class ToolsFragment : Fragment() {
                 }
                 return
             }
+
+            if (username.isEmpty()) {
+                showTip("请先在「账号」栏填写测试员姓名。\n· 有WebDAV：再填服务器地址和密码后确认登录\n· 无服务器：密码栏输入超级口令即可离线注册")
+                return
+            }
+
             val url = etServer.text?.toString()?.trim().orEmpty()
             if (url.isEmpty()) {
-                toast("请填写服务器地址，或使用超级口令")
+                showTip("请填写服务器地址，或使用超级口令（密码长度应为${SyncStore.SUPER_PASSWORD.length}位；当前收到${pass.length}位）。")
                 return
             }
             toast(R.string.sync_verifying)
@@ -201,6 +219,7 @@ class ToolsFragment : Fragment() {
                     // 失败：完整诊断留在弹窗内，可复制发回
                     tvDiag.visibility = View.VISIBLE
                     tvDiag.text = withContext(Dispatchers.IO) { cl.diagnose() }
+                        .plus("\n(发送的密码长度 ${pass.length} 位)")
                 }
             }
         }
