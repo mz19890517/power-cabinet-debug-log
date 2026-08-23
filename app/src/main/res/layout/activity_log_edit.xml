@@ -1,0 +1,191 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res/auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+    <com.google.android.material.appbar.AppBarLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <com.google.android.material.appbar.MaterialToolbar
+            android:id="@+id/toolbar"
+            android:layout_width="match_parent"
+            android:layout_height="?attr/actionBarSize"
+            android:background="@color/primary"
+            app:navigationIcon="@drawable/ic_back"
+            app:title="@string/log_new_title"
+            app:titleTextColor="@color/on_primary" />
+    </com.google.android.material.appbar.AppBarLayout>
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:paddingBottom="20dp">
+
+            <!-- 所属定位 -->
+            <TextView
+                style="@style/SectionLabel"
+                android:text="@string/section_locate" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <Spinner
+                    android:id="@+id/sp_project"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_weight="1" />
+
+                <Spinner
+                    android:id="@+id/sp_instance"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_weight="1.3" />
+            </LinearLayout>
+
+            <!-- 回路号 -->
+            <TextView
+                style="@style/SectionLabel"
+                android:text="@string/label_circuit" />
+
+            <AutoCompleteTextView
+                android:id="@+id/act_circuit"
+                style="@style/FormInput"
+                android:hint="@string/hint_circuit_input"
+                android:inputType="text"
+                android:completionThreshold="1" />
+
+            <!-- 预选测试项 -->
+            <TextView
+                style="@style/SectionLabel"
+                android:text="@string/section_pool" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/btn_sel_all"
+                    style="@style/SmallButton"
+                    android:layout_width="wrap_content"
+                    android:text="@string/btn_select_all" />
+
+                <Button
+                    android:id="@+id/btn_sel_clear"
+                    style="@style/SmallButton"
+                    android:layout_width="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:text="@string/btn_clear_sel" />
+
+                <Button
+                    android:id="@+id/btn_fill"
+                    style="@style/SmallButton"
+                    android:layout_width="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:text="@string/btn_fill" />
+            </LinearLayout>
+
+            <FrameLayout
+                android:layout_width="match_parent"
+                android:layout_height="200dp"
+                android:layout_marginTop="6dp">
+
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/rv_pool"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent" />
+
+                <TextView
+                    android:id="@+id/tv_pool_empty"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center"
+                    android:gravity="center"
+                    android:text="@string/empty_pool"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp"
+                    android:visibility="gone" />
+            </FrameLayout>
+
+            <!-- 测试内容 -->
+            <TextView
+                style="@style/SectionLabel"
+                android:text="@string/label_test_content" />
+
+            <EditText
+                android:id="@+id/et_content"
+                style="@style/FormInput"
+                android:gravity="top"
+                android:inputType="textMultiLine|textCapSentences"
+                android:minLines="6" />
+
+            <!-- 测试人员 / 备注 -->
+            <TextView
+                style="@style/SectionLabel"
+                android:text="@string/label_tester" />
+
+            <EditText
+                android:id="@+id/et_tester"
+                style="@style/FormInput"
+                android:inputType="textPersonName" />
+
+            <TextView
+                style="@style/SectionLabel"
+                android:text="@string/label_remark" />
+
+            <EditText
+                android:id="@+id/et_remark"
+                style="@style/FormInput"
+                android:gravity="top"
+                android:inputType="textMultiLine"
+                android:minLines="2" />
+
+            <!-- 故障记录 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <TextView
+                    style="@style/SectionLabel"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:text="@string/section_faults" />
+
+                <Button
+                    android:id="@+id/btn_add_fault"
+                    style="@style/SmallButton"
+                    android:layout_width="wrap_content"
+                    android:layout_gravity="center_vertical"
+                    android:layout_marginTop="10dp"
+                    android:text="@string/btn_add_fault" />
+            </LinearLayout>
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rv_faults"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content" />
+
+            <Button
+                android:id="@+id/btn_save"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="18dp"
+                android:text="@string/save"
+                android:textSize="15sp" />
+        </LinearLayout>
+    </ScrollView>
+</LinearLayout>

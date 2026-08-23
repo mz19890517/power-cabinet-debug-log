@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">电源柜调试记录</string>
+
+    <!-- 底部导航 -->
+    <string name="tab_logs">调试日志</string>
+    <string name="tab_device">设备管理</string>
+    <string name="tab_tools">数据工具</string>
+
+    <!-- 通用 -->
+    <string name="save">保存</string>
+    <string name="cancel">取消</string>
+    <string name="delete">删除</string>
+    <string name="edit">编辑</string>
+    <string name="add">添加</string>
+    <string name="confirm">确认</string>
+    <string name="name_required">名称不能为空</string>
+    <string name="whole_cabinet">整柜测试</string>
+
+    <!-- 日志列表 -->
+    <string name="filter_all_types">全部类型</string>
+    <string name="filter_all_projects">全部项目</string>
+    <string name="filter_all_instances">全部柜子</string>
+    <string name="filter_all_status">全部故障状态</string>
+    <string name="filter_pending">含待处理故障</string>
+    <string name="filter_resolved">故障已全解决</string>
+    <string name="hint_circuit_filter">按回路号筛选</string>
+    <string name="hint_text_search">全文搜索：内容/现象/解决方法/备注…</string>
+    <string name="empty_logs">暂无调试日志\n点击右下角 ＋ 新建</string>
+
+    <!-- 日志编辑 -->
+    <string name="log_new_title">新建调试日志</string>
+    <string name="log_edit_title">编辑调试日志</string>
+    <string name="section_locate">所属定位</string>
+    <string name="label_project">项目</string>
+    <string name="label_instance">柜子实例</string>
+    <string name="label_circuit">回路号</string>
+    <string name="hint_circuit_input">留空 = 整柜测试；可输入后从历史联想选择</string>
+    <string name="section_pool">预选测试项（勾选后一键填充）</string>
+    <string name="btn_select_all">全选</string>
+    <string name="btn_clear_sel">清空</string>
+    <string name="btn_fill">填充到测试内容</string>
+    <string name="label_test_content">测试内容（可手动修改）</string>
+    <string name="label_tester">测试人员</string>
+    <string name="label_remark">备注</string>
+    <string name="section_faults">故障记录</string>
+    <string name="btn_add_fault">＋ 添加故障</string>
+    <string name="empty_pool">该柜子类型暂无候选测试项\n可在「设备管理→柜子类型」中维护</string>
+    <string name="err_pick_instance">请选择柜子实例</string>
+    <string name="err_content_empty">测试内容不能为空</string>
+    <string name="saved_ok">已保存</string>
+
+    <!-- 故障弹窗 -->
+    <string name="fault_title_edit">编辑故障</string>
+    <string name="fault_title_add">添加故障</string>
+    <string name="fault_circuit">故障回路</string>
+    <string name="fault_symptom">问题现象（必填）</string>
+    <string name="fault_solution">解决方法</string>
+    <string name="fault_occur_time">发生时间</string>
+    <string name="fault_resolve_time">解决完成时间</string>
+    <string name="fault_status_pending">待处理</string>
+    <string name="fault_status_resolved">已解决</string>
+    <string name="err_symptom_empty">请填写问题现象</string>
+
+    <!-- 设备管理 -->
+    <string name="device_tab_projects">项目</string>
+    <string name="device_tab_types">柜子类型</string>
+    <string name="empty_projects">暂无项目\n点击右上角 ＋ 新建工程项目</string>
+    <string name="empty_types">暂无柜子类型模板\n点击右上角 ＋ 新建（如：直流馈线柜）</string>
+    <string name="new_project">新建项目</string>
+    <string name="edit_project">编辑项目</string>
+    <string name="project_name">项目名称（必填）</string>
+    <string name="project_code">工程编号（选填）</string>
+    <string name="project_remark">备注（选填）</string>
+    <string name="new_type">新建柜子类型</string>
+    <string name="edit_type">重命名类型</string>
+    <string name="type_name">类型名称（必填）\n如：直流馈线柜 / 充电屏</string>
+    <string name="type_remark_hint">说明（选填）</string>
+    <string name="cabinets_fmt">%1$d 台柜子 · %2$d 条日志</string>
+    <string name="type_stat_fmt">%1$d 个候选项 · %2$d 台实例在用</string>
+
+    <!-- 项目详情 -->
+    <string name="title_project_detail">项目详情</string>
+    <string name="section_instances">本项目柜子</string>
+    <string name="add_instance">添加柜子</string>
+    <string name="instance_name">实例名称（必填，如：1号直流馈线屏）</string>
+    <string name="instance_code">设备编号（选填）</string>
+    <string name="instance_location">安装位置（选填）</string>
+    <string name="instance_installer">安装人员（选填）</string>
+    <string name="pick_type">选择柜子类型</string>
+    <string name="menu_log_new_here">新建日志</string>
+    <string name="warn_del_project">删除项目「%1$s」将连带删除其下 %2$d 台柜子的全部调试日志与故障记录，且不可恢复。确定？</string>
+    <string name="warn_del_instance">删除柜子「%1$s」将连带删除其 %2$d 条调试日志，不可恢复。确定？</string>
+    <string name="empty_instances">该项目还没有柜子\n点击右上角 ＋ 添加</string>
+
+    <!-- 类型详情 -->
+    <string name="title_type_detail">柜子类型详情</string>
+    <string name="section_pool_manage">预选测试项候选池</string>
+    <string name="pool_input_hint">输入一条测试项后点添加</string>
+    <string name="batch_import">批量导入</string>
+    <string name="batch_import_hint">每行一条，自动跳过重复项：</string>
+    <string name="added_fmt">新增 %1$d 条，跳过重复 %2$d 条</string>
+    <string name="section_usage">使用该类型的柜子（跨项目只读）</string>
+    <string name="warn_del_type">删除类型「%1$s」将连带删除使用它的 %2$d 台柜子及其全部日志，不可恢复。确定？</string>
+    <string name="del_candidate">删除该候选测试项？</string>
+    <string name="empty_usage">尚无柜子使用该类型</string>
+    <string name="empty_pool_detail">候选池为空，在上方输入框添加第一条</string>
+
+    <!-- 数据工具 -->
+    <string name="tools_export">导出全部日志 Excel</string>
+    <string name="tools_export_desc">生成 .xlsx（A4纵向打印适配），含“调试日志”与“故障记录”两个工作表</string>
+    <string name="tools_backup">备份数据 (JSON)</string>
+    <string name="tools_backup_desc">导出全部数据为单个JSON文件，可用于换机或存档</string>
+    <string name="tools_restore">恢复数据 (JSON)</string>
+    <string name="tools_restore_desc">从备份JSON恢复，⚠ 将覆盖当前全部数据</string>
+    <string name="stats_title">数据统计</string>
+    <string name="about_offline">纯离线应用 · 未申请网络权限 · 全部数据仅存储于本机SQLite数据库\n备份文件为标准JSON，可供后期电脑端/网页端直接读取。</string>
+    <string name="export_ok">导出成功：%1$s</string>
+    <string name="backup_ok">备份成功</string>
+    <string name="restore_confirm_title">确认恢复</string>
+    <string name="restore_confirm_msg">将清空当前全部数据，并导入备份中的：\n项目 %1$d · 类型 %2$d · 柜子 %3$d · 日志 %4$d · 故障 %5$d\n\n此操作不可撤销，确定继续吗？</string>
+    <string name="restore_ok">恢复成功</string>
+    <string name="restore_bad_file">文件无效或已损坏，未做任何修改</string>
+    <string name="op_failed">操作失败：%1$s</string>
+</resources>

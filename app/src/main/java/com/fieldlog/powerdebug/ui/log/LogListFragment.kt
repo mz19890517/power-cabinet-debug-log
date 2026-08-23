@@ -1,0 +1,274 @@
+package com.fieldlog.powerdebug.ui.log
+
+import android.app.AlertDialog
+import android.content.Intent
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.text.Editable
+import android.text.TextWatcher
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
+import android.widget.Spinner
+import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.fieldlog.powerdebug.App
+import com.fieldlog.powerdebug.R
+import com.fieldlog.powerdebug.data.db.CabinetInstance
+import com.fieldlog.powerdebug.data.db.CabinetType
+import com.fieldlog.powerdebug.data.db.LogListItem
+import com.fieldlog.powerdebug.data.db.Project
+import com.fieldlog.powerdebug.databinding.FragmentLogListBinding
+import com.fieldlog.powerdebug.databinding.ItemLogBinding
+import com.fieldlog.powerdebug.util.DT
+import kotlinx.coroutines.launch
+
+class LogListFragment : Fragment() {
+
+    private var _b: FragmentLogListBinding? = null
+    private val b get() = _b!!
+
+    private lateinit var adapter: LogAdapter
+
+    private var projects: List<Project> = emptyList()
+    private var types: List<CabinetType> = emptyList()
+    private var instances: List<CabinetInstance> = emptyList()
+
+    private var selProjectId = 0L
+    private var selTypeId = 0L
+    private var selInstanceId = 0L
+    private var selStatus = -1
+
+    private val handler = Handler(Looper.getMainLooper())
+    private val searchRunnable = Runnable { reload() }
+
+    override fun onCreateView(
+        inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
+    ): View {
+        _b = FragmentLogListBinding.inflate(inflater, container, false)
+        return b.root
+    }
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        adapter = LogAdapter(
+            onClick = { startActivity(logIntent(it.log.id)) },
+            onLongClick = { confirmDelete(it) }
+        )
+        b.rvLogs.layoutManager = LinearLayoutManager(requireContext())
+        b.rvLogs.adapter = adapter
+
+        App.repo.watchProjects().observe(viewLifecycleOwner) {
+            projects = it
+            refreshProjectSpinner()
+        }
+        App.repo.watchTypes().observe(viewLifecycleOwner) {
+            types = it
+            refreshTypeSpinner()
+        }
+
+        b.spStatus.adapter = ArrayAdapter(
+            requireContext(),
+            android.R.layout.simple_spinner_item,
+            arrayOf(
+                getString(R.string.filter_all_status),
+                getString(R.string.filter_pending),
+                getString(R.string.filter_resolved)
+            )
+        ).apply { setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+        b.spStatus.onItemSelectedListener = selListener { pos ->
+            selStatus = intArrayOf(-1, 0, 1)[pos]
+            reload()
+        }
+
+        b.etCircuitFilter.addTextChangedListener(debounceWatcher)
+        b.etTextSearch.addTextChangedListener(debounceWatcher)
+
+        viewLifecycleOwner.lifecycleScope.launch { reloadInstances() }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::adapter.isInitialized) reload()
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        _b = null
+    }
+
+    // ---------- 筛选联动 ----------
+
+    private fun refreshProjectSpinner() {
+        val labels = mutableListOf(getString(R.string.filter_all_projects))
+        projects.forEach { labels.add(it.name) }
+        b.spProject.bind(labels) { pos ->
+            val newId = projects.getOrNull(pos - 1)?.id ?: 0L
+            if (newId != selProjectId) {
+                selProjectId = newId
+                selInstanceId = 0L
+                viewLifecycleOwner.lifecycleScope.launch { reloadInstances() }
+            }
+        }
+        selectSpinner(b.spProject, projects.indexOfFirst { it.id == selProjectId } + 1)
+    }
+
+    private fun refreshTypeSpinner() {
+        val labels = mutableListOf(getString(R.string.filter_all_types))
+        types.forEach { labels.add(it.name) }
+        b.spType.bind(labels) { pos ->
+            val newId = types.getOrNull(pos - 1)?.id ?: 0L
+            if (newId != selTypeId) {
+                selTypeId = newId
+                selInstanceId = 0L
+                viewLifecycleOwner.lifecycleScope.launch { reloadInstances() }
+            }
+        }
+        selectSpinner(b.spType, types.indexOfFirst { it.id == selTypeId } + 1)
+    }
+
+    private suspend fun reloadInstances() {
+        instances = App.db.instanceDao().byProjectAndTypeOnce(selProjectId, selTypeId)
+        val labels = mutableListOf(getString(R.string.filter_all_instances))
+        instances.forEach { labels.add(it.name) }
+        b.spInstance.bind(labels) { pos ->
+            val newId = instances.getOrNull(pos - 1)?.id ?: 0L
+            if (newId != selInstanceId) {
+                selInstanceId = newId
+                reload()
+            }
+        }
+        selectSpinner(b.spInstance, instances.indexOfFirst { it.id == selInstanceId } + 1)
+        reload()
+    }
+
+    // ---------- 查询 ----------
+
+    private fun reload() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            val list = try {
+                App.repo.searchLogs(
+                    projectId = selProjectId,
+                    typeId = selTypeId,
+                    instanceId = selInstanceId,
+                    status = selStatus,
+                    circuit = b.etCircuitFilter.text?.toString()?.trim().orEmpty(),
+                    q = b.etTextSearch.text?.toString()?.trim().orEmpty()
+                )
+            } catch (e: Exception) {
+                emptyList<LogListItem>()
+            }
+            adapter.submit(list)
+            b.tvEmpty.visibility = if (list.isEmpty()) View.VISIBLE else View.GONE
+        }
+    }
+
+    private fun confirmDelete(item: LogListItem) {
+        AlertDialog.Builder(requireContext())
+            .setTitle(R.string.delete)
+            .setMessage(
+                "删除「${item.instanceName} · ${item.log.circuit.ifEmpty { getString(R.string.whole_cabinet) }}」这条日志？\n其下故障记录将一并删除。"
+            )
+            .setPositiveButton(R.string.confirm) { _, _ ->
+                viewLifecycleOwner.lifecycleScope.launch {
+                    App.repo.deleteLog(item.log.id)
+                    reload()
+                }
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun logIntent(logId: Long) =
+        Intent(requireContext(), LogEditActivity::class.java)
+            .putExtra(LogEditActivity.KEY_LOG_ID, logId)
+
+    // ---------- Spinner 工具 ----------
+
+    private fun Spinner.bind(items: List<String>, onSel: (Int) -> Unit) {
+        tag = true // 绑定与静默恢复期间忽略回调
+        adapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item, items).apply {
+            setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        }
+        onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
+                if (tag == true) return
+                onSel(pos)
+            }
+
+            override fun onNothingSelected(p: AdapterView<*>?) {}
+        }
+    }
+
+    /** 静默设置选中位置（避免触发联动） */
+    private fun selectSpinner(sp: Spinner, pos: Int) {
+        sp.tag = true
+        if (pos >= 0 && sp.selectedItemPosition != pos) sp.setSelection(pos, false)
+        else sp.tag = false
+        sp.post { sp.tag = false }
+    }
+
+    private fun selListener(onSel: (Int) -> Unit): AdapterView.OnItemSelectedListener =
+        object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) = onSel(pos)
+            override fun onNothingSelected(p: AdapterView<*>?) {}
+        }
+
+    private val debounceWatcher = object : TextWatcher {
+        override fun beforeTextChanged(s: CharSequence?, st: Int, c: Int, a: Int) {}
+        override fun onTextChanged(s: CharSequence?, st: Int, c: Int, a: Int) {}
+        override fun afterTextChanged(s: Editable?) {
+            handler.removeCallbacks(searchRunnable)
+            handler.postDelayed(searchRunnable, 350)
+        }
+    }
+}
+
+class LogAdapter(
+    private val onClick: (LogListItem) -> Unit,
+    private val onLongClick: (LogListItem) -> Unit
+) : RecyclerView.Adapter<LogAdapter.VH>() {
+
+    private val data = mutableListOf<LogListItem>()
+
+    fun submit(list: List<LogListItem>) {
+        data.clear()
+        data.addAll(list)
+        notifyDataSetChanged()
+    }
+
+    class VH(val ib: ItemLogBinding) : RecyclerView.ViewHolder(ib.root)
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH =
+        VH(ItemLogBinding.inflate(LayoutInflater.from(parent.context), parent, false))
+
+    override fun getItemCount() = data.size
+
+    override fun onBindViewHolder(h: VH, pos: Int) {
+        val item = data[pos]
+        val ctx = h.ib.root.context
+        val circuitTxt = item.log.circuit.ifEmpty { ctx.getString(R.string.whole_cabinet) }
+        h.ib.tvTitle.text = "${item.instanceName} · $circuitTxt"
+        h.ib.tvDate.text = DT.full(item.log.createdAt)
+
+        if (item.pendingCount > 0) {
+            h.ib.badgePending.visibility = View.VISIBLE
+            h.ib.badgePending.text = "待处理 ×${item.pendingCount}"
+        } else h.ib.badgePending.visibility = View.GONE
+        if (item.resolvedCount > 0) {
+            h.ib.badgeResolved.visibility = View.VISIBLE
+            h.ib.badgeResolved.text = "已解决 ×${item.resolvedCount}"
+        } else h.ib.badgeResolved.visibility = View.GONE
+
+        h.ib.tvContent.text = item.log.testContent
+        val tester = item.log.tester.takeIf { it.isNotBlank() }?.let { " · 测试:$it" }.orEmpty()
+        h.ib.tvFooter.text = "${item.projectName} · ${item.typeName}$tester"
+
+        h.ib.root.setOnClickListener { onClick(item) }
+        h.ib.root.setOnLongClickListener { onLongClick(item); true }
+    }
+}
