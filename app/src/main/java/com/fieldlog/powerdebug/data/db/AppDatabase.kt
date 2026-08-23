@@ -16,9 +16,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         DebugLog::class,
         FaultRecord::class,
         PlannedItem::class,
-        TesterAccount::class
+        TesterAccount::class,
+        Debugger::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -30,6 +31,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun faultRecordDao(): FaultRecordDao
     abstract fun plannedItemDao(): PlannedItemDao
     abstract fun testerAccountDao(): TesterAccountDao
+    abstract fun debuggerDao(): DebuggerDao
 
     companion object {
         const val DB_NAME = "power_debug.db"
@@ -208,9 +210,25 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** v4→v5：新增调试员名单表 debuggers（超级口令维护，随备份/WebDAV互通，name唯一） */
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `debuggers` (" +
+                        "`id` TEXT NOT NULL PRIMARY KEY, " +
+                        "`name` TEXT NOT NULL, " +
+                        "`createdAt` INTEGER NOT NULL, " +
+                        "`updatedAt` INTEGER NOT NULL)"
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_debuggers_name` ON `debuggers` (`name`)"
+                )
+            }
+        }
+
         fun build(context: Context): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, DB_NAME)
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                 .build()
     }
 }

@@ -25,8 +25,8 @@
 
 ## 数据库与备份格式
 
-- Room schema 当前 version=4（迁移链 1→2→3→4 必须保持完整，禁止 fallbackToDestructiveMigration）
-- JSON 备份 schemaVersion=4，字段名=数据库列名，是将来 PC/网页端的交换格式
+- Room schema 当前 version=5（迁移链 1→2→3→4→5 必须保持完整，禁止 fallbackToDestructiveMigration）
+- JSON 备份 schemaVersion=5，字段名=数据库列名，是将来 PC/网页端的交换格式
 - 新增表/字段：DB version+1 写纯SQL迁移 + 备份版本+1 + parseBackup/restoreJson/merge 三处同步 + README 记录变更说明
 - 合并语义：UUID主键按 id 去重插入，同 id 冲突 updatedAt 新者胜，绝不删除本地数据
 
@@ -35,6 +35,7 @@
 projects → cabinet_types(候选池 candidate_items) → cabinet_instances → debug_logs → fault_records
 planned_items：柜子实例的预选待测清单，三态 result（0未测/1通过/2未通过），未通过项复测✓才转绿。
 测试员账号 tester_accounts + WebDAV 团队互通（util/WebDavSync.kt，快照 backup_<账号>.json）。
+debuggers：调试员名单（v5新增），与登录账号无关，增/改/删全部要超级口令；日志测试人员默认带出最近用（SyncStore.lastDebugger），改名/删除不动历史日志。
 
 ## 其他约定
 

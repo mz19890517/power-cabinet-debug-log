@@ -151,10 +151,16 @@
                 style="@style/SectionLabel"
                 android:text="@string/label_tester" />
 
+            <!-- 点击弹出调试员名单选择；不可自由输入，保证姓名与名单一致 -->
             <EditText
                 android:id="@+id/et_tester"
                 style="@style/FormInput"
-                android:inputType="textPersonName" />
+                android:clickable="true"
+                android:cursorVisible="false"
+                android:focusable="false"
+                android:hint="@string/tester_pick_hint"
+                android:inputType="none"
+                android:longClickable="false" />
 
             <TextView
                 style="@style/SectionLabel"

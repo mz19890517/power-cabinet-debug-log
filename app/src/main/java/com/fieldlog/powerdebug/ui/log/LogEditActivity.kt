@@ -245,6 +245,27 @@ class LogEditActivity : AppCompatActivity() {
     private suspend fun currentTypeId(): String =
         App.repo.getInstance(selInstanceId)?.typeId ?: ""
 
+    /** 测试人员栏点击：从调试员名单中选人 */
+    private fun showTesterPicker() {
+        lifecycleScope.launch {
+            val names = App.repo.debuggers().map { it.name }
+            if (names.isEmpty()) {
+                Toast.makeText(this@LogEditActivity, R.string.debugger_empty_hint, Toast.LENGTH_LONG).show()
+                return@launch
+            }
+            val cur = b.etTester.text?.toString()?.trim().orEmpty()
+            val checked = names.indexOf(cur)
+            AlertDialog.Builder(this@LogEditActivity)
+                .setTitle(R.string.tester_pick_title)
+                .setSingleChoiceItems(names.toTypedArray(), checked) { dlg, which ->
+                    b.etTester.setText(names[which])
+                    dlg.dismiss()
+                }
+                .setNegativeButton(R.string.cancel, null)
+                .show()
+        }
+    }
+
     // ---------- 装载编辑数据 / 预选 ----------
 
     private suspend fun loadEditingOrPrefill() {
@@ -274,6 +295,8 @@ class LogEditActivity : AppCompatActivity() {
             b.etContent.setText(d.log.testContent)
             b.etTester.setText(d.log.tester)
             b.etRemark.setText(d.log.remark)
+            // 编辑旧日志同样支持点击换人（历史姓名原样显示，换人即更新）
+            b.etTester.setOnClickListener { showTesterPicker() }
 
             val creator = d.log.createdBy.ifEmpty { "-" }
             val updator = d.log.updatedBy.ifEmpty { "-" }
@@ -309,10 +332,11 @@ class LogEditActivity : AppCompatActivity() {
                     App.db.instanceDao().byProjectOnce(selProjectId).firstOrNull()?.id ?: ""
             }
 
-            // 已登录测试员：测试人员栏自动绑定当前账号
+            // 测试人员：默认带出最近一次使用的调试员（不再绑定登录账号），点击可换人
             if (b.etTester.text.isNullOrBlank()) {
-                SyncStore.currentUser(this)?.let { b.etTester.setText(it) }
+                b.etTester.setText(SyncStore.lastDebugger(this))
             }
+            b.etTester.setOnClickListener { showTesterPicker() }
             reloadInstances()
         }
     }
@@ -437,6 +461,8 @@ class LogEditActivity : AppCompatActivity() {
         lifecycleScope.launch {
             try {
                 val marked = App.repo.saveLog(log, drafts.toList(), actor)
+                // 记住本次使用的调试员，下次写日志默认带出
+                if (log.tester.isNotBlank()) SyncStore.setLastDebugger(this@LogEditActivity, log.tester)
                 if (marked > 0) {
                     Toast.makeText(
                         this@LogEditActivity,

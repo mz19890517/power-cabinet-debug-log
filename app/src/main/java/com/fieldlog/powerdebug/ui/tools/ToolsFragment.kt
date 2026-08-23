@@ -66,6 +66,7 @@ class ToolsFragment : Fragment() {
         // ---- 账号与同步 ----
         b.btnLogin.setOnClickListener { showLoginDialog() }
         b.btnSwitchUser.setOnClickListener { showSwitchUserDialog() }
+        b.btnManageDebuggers.setOnClickListener { showDebuggerGate() }
         b.btnLogout.setOnClickListener {
             SyncStore.setCurrentUser(requireContext(), null)
             refreshAccountUI()
@@ -115,6 +116,12 @@ class ToolsFragment : Fragment() {
         b.tvWebdavStatus.text =
             if (cfg == null) "WebDAV：未配置（仅本地身份标记）"
             else "WebDAV：${cfg.url}"
+        viewLifecycleOwner.lifecycleScope.launch {
+            val roster = App.repo.debuggers()
+            b.tvDebuggers.text =
+                if (roster.isEmpty()) getString(R.string.debugger_summary_empty)
+                else getString(R.string.debugger_summary, roster.size, roster.joinToString("、") { it.name })
+        }
     }
 
     /**
@@ -249,6 +256,119 @@ class ToolsFragment : Fragment() {
                 .setNegativeButton(R.string.cancel, null)
                 .show()
         }
+    }
+
+    // ---------- 调试员名单管理（增/改/删均需超级口令） ----------
+
+    /** 第一步：验证超级口令 */
+    private fun showDebuggerGate() {
+        val dlgView = layoutInflater.inflate(R.layout.dialog_single_input, null)
+        val et = dlgView.findViewById<EditText>(R.id.et_input)
+        et.hint = getString(R.string.debugger_gate_hint)
+        et.inputType = android.text.InputType.TYPE_CLASS_TEXT or
+            android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+
+        val dlg = Builder(requireContext())
+            .setTitle(R.string.debugger_gate_title)
+            .setMessage(R.string.debugger_gate_msg)
+            .setView(dlgView)
+            .setPositiveButton(R.string.confirm, null) // 手动接管：口令错误不关闭
+            .setNegativeButton(R.string.cancel, null)
+            .create()
+        dlg.show()
+        dlg.getButton(AlertDialog.BUTTON_POSITIVE)?.setOnClickListener {
+            if (et.text?.toString()?.trim() == SyncStore.SUPER_PASSWORD) {
+                dlg.dismiss()
+                showDebuggerManager()
+            } else {
+                toast(getString(R.string.debugger_gate_wrong))
+            }
+        }
+    }
+
+    /** 名单管理主弹窗：点名字→改名/删除；底部「添加」 */
+    private fun showDebuggerManager() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            val roster = App.repo.debuggers()
+            val names = roster.map { it.name }.toTypedArray()
+            Builder(requireContext())
+                .setTitle(getString(R.string.debugger_manager_title, roster.size))
+                .setItems(names) { _, which -> showDebuggerItemMenu(roster[which]) }
+                .setPositiveButton(R.string.debugger_add) { _, _ -> showDebuggerEditDialog(null) }
+                .setNegativeButton(R.string.close, null)
+                .show()
+        }
+    }
+
+    /** 单个调试员操作菜单 */
+    private fun showDebuggerItemMenu(d: com.fieldlog.powerdebug.data.db.Debugger) {
+        Builder(requireContext())
+            .setTitle(d.name)
+            .setItems(
+                arrayOf(getString(R.string.debugger_rename), getString(R.string.debugger_delete))
+            ) { _, which ->
+                when (which) {
+                    0 -> showDebuggerEditDialog(d)
+                    1 -> confirmDeleteDebugger(d)
+                }
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    /** 新增（d=null）/ 改名 共用输入弹窗；完成后回到名单管理 */
+    private fun showDebuggerEditDialog(d: com.fieldlog.powerdebug.data.db.Debugger?) {
+        val dlgView = layoutInflater.inflate(R.layout.dialog_single_input, null)
+        val et = dlgView.findViewById<EditText>(R.id.et_input)
+        et.hint = getString(R.string.debugger_name_hint)
+        d?.let { et.setText(it.name) }
+
+        val dlg = Builder(requireContext())
+            .setTitle(if (d == null) R.string.debugger_add else R.string.debugger_rename)
+            .setView(dlgView)
+            .setPositiveButton(R.string.confirm, null) // 手动接管：校验失败不关闭
+            .setNegativeButton(R.string.cancel, null)
+            .create()
+        dlg.show()
+        dlg.getButton(AlertDialog.BUTTON_POSITIVE)?.setOnClickListener {
+            val name = et.text?.toString()?.trim().orEmpty()
+            if (name.isEmpty()) {
+                toast(getString(R.string.debugger_name_empty)); return@setOnClickListener
+            }
+            viewLifecycleOwner.lifecycleScope.launch {
+                val ok = if (d == null) App.repo.addDebugger(name)
+                else App.repo.renameDebugger(d.id, name)
+                if (ok) {
+                    toast(
+                        getString(
+                            if (d == null) R.string.debugger_added else R.string.debugger_renamed,
+                            name
+                        )
+                    )
+                    dlg.dismiss()
+                    refreshAccountUI()
+                    showDebuggerManager()
+                } else {
+                    toast(getString(R.string.debugger_exists))
+                }
+            }
+        }
+    }
+
+    private fun confirmDeleteDebugger(d: com.fieldlog.powerdebug.data.db.Debugger) {
+        Builder(requireContext())
+            .setTitle(R.string.debugger_delete)
+            .setMessage(getString(R.string.debugger_delete_confirm, d.name))
+            .setPositiveButton(R.string.confirm) { _, _ ->
+                viewLifecycleOwner.lifecycleScope.launch {
+                    App.repo.deleteDebugger(d.id)
+                    toast(getString(R.string.debugger_deleted, d.name))
+                    refreshAccountUI()
+                    showDebuggerManager()
+                }
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
     }
 
     // ---------- Excel 导出 ----------

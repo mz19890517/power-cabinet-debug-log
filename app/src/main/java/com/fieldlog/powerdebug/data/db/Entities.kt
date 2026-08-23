@@ -201,6 +201,21 @@ data class TesterAccount(
     }
 }
 
+/**
+ * 调试员名单：与登录账号无关的现场调试人员名册，由超级口令统一维护（增/改/删均需验证）。
+ * 日志「测试人员」从名单中选取，默认带出最近一次使用的姓名；随备份/WebDAV同步到全队。
+ */
+@Entity(
+    tableName = "debuggers",
+    indices = [Index(value = ["name"], unique = true)]
+)
+data class Debugger(
+    @PrimaryKey val id: String = "",
+    val name: String,
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
+)
+
 // ---------- 查询结果 POJO ----------
 
 data class LogListItem(

@@ -98,7 +98,8 @@ class TestChecklistActivity : AppCompatActivity() {
 
     private fun confirmGenerate() {
         val et = EditText(this).apply {
-            setText(SyncStore.currentUser(this@TestChecklistActivity).orEmpty())
+            // 默认带出最近一次使用的调试员（与登录账号无关）
+            setText(SyncStore.lastDebugger(this@TestChecklistActivity))
             hint = getString(R.string.tester_name)
         }
         AlertDialog.Builder(this)
@@ -122,6 +123,10 @@ class TestChecklistActivity : AppCompatActivity() {
                     testerInput,
                     SyncStore.currentUser(this@TestChecklistActivity).orEmpty()
                 )
+                // 记住本次使用的调试员
+                if (testerInput.isNotBlank()) {
+                    SyncStore.setLastDebugger(this@TestChecklistActivity, testerInput)
+                }
                 Toast.makeText(this@TestChecklistActivity, R.string.log_generated, Toast.LENGTH_SHORT).show()
                 // 生成后追问是否立即登记/补充故障
                 AlertDialog.Builder(this@TestChecklistActivity)

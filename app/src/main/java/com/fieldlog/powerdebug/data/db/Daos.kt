@@ -403,3 +403,31 @@ interface TesterAccountDao {
     @Query("UPDATE tester_accounts SET source = :source WHERE username = :username")
     suspend fun updateSource(username: String, source: String)
 }
+
+@Dao
+interface DebuggerDao {
+    @Query("SELECT * FROM debuggers ORDER BY createdAt")
+    suspend fun allOnce(): List<Debugger>
+
+    @Query("SELECT * FROM debuggers WHERE id = :id LIMIT 1")
+    suspend fun byIdOnce(id: String): Debugger?
+
+    @Query("SELECT * FROM debuggers WHERE name = :name LIMIT 1")
+    suspend fun byNameOnce(name: String): Debugger?
+
+    /** IGNORE策略：重名静默跳过，唯一性由唯一索引兜底 */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insert(d: Debugger)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertAll(list: List<Debugger>)
+
+    @Update
+    suspend fun updateAll(list: List<Debugger>)
+
+    @Delete
+    suspend fun delete(d: Debugger)
+
+    @Query("DELETE FROM debuggers")
+    suspend fun wipe()
+}

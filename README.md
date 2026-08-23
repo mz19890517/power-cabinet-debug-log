@@ -7,6 +7,7 @@
 - **项目制管理**：以工程项目为根，一个项目包含一台或多台柜子
 - **柜子类型（模板）**：如“直流馈线柜”，每个类型维护一份**预选测试项候选池**；保存日志时测试内容自动沉淀进候选池（自动去重），支持单条删除、批量粘贴导入
 - **预选待测（v2.4 三态）**：建柜子自动生成该柜的测试清单；长按柜子「开始测试」逐项 ✓通过 / ✗未通过（强制填故障现象，自动生成故障记录）；未通过项下次继续出现在清单里供复测，复测✓才转绿；手动写日志保存时自动把内容命中的项标"通过"（忽略行尾标点的宽容匹配）。项目卡/柜子行实时显示 待测·未通过·待处理故障 三个数字
+- **调试员名单（v2.5）**：与登录账号无关的现场调试人员名册，由**超级口令**统一维护（添加/改名/删除均需验证）；写日志和开始测试时「测试人员」默认带出最近一次使用的调试员，点击即可换人；改名/删除不影响历史日志；名单随备份与 WebDAV 同步互通到全队
 - **柜子实例**：现场实际设备（如“1号直流馈线屏”），隶属某项目、绑定某类型；同型号柜子共用同一套候选池。字段：名称必填，设备编号 / 安装位置 / **安装人员** 选填
 - **调试日志**：
   - 项目→实例 两级定位后，自动加载该类型候选池，勾选后一键填充测试内容（可手改）
@@ -93,13 +94,15 @@ Project 1─N CabinetInstance N─1 CabinetType 1─N CandidateItem(候选池)
    ```json
    {
      "app": "power-debug-log",
-     "schemaVersion": 4,
+     "schemaVersion": 5,
      "projects":      [{ "id","name","code","remark","createdAt","updatedAt" }],
      "cabinetTypes":  [{ "id","name","remark","createdAt","updatedAt" }],
      "candidateItems":[{ "id","typeId","content","createdAt","updatedAt" }],
      "instances":     [{ "id","projectId","typeId","name","deviceCode","location","installer","createdAt","updatedAt" }],
      "logs":          [{ "id","instanceId","circuit","testContent","tester","remark","createdBy","updatedBy","createdAt","updatedAt" }],
-     "faults":        [{ "id","logId","circuit","symptom","solution","occurredAt","resolvedAt","status","updatedAt" }]
+     "faults":        [{ "id","logId","circuit","symptom","solution","occurredAt","resolvedAt","status","updatedAt" }],
+     "plannedItems":  [{ "id","instanceId","content","enabled","doneAt","logId","result","faultId","createdAt","updatedAt" }],
+     "debuggers":     [{ "id","name","createdAt","updatedAt" }]
    }
    ```
    - v2 起所有 `id` 为客户端生成的 UUID 字符串（多设备离线新增不撞主键）；`updatedAt` 为合并时钟。
@@ -109,6 +112,7 @@ Project 1─N CabinetInstance N─1 CabinetType 1─N CandidateItem(候选池)
 4. 扩展新功能（如照片附件）时新增表并 `schemaVersion+1`，保持旧字段不动即可双向兼容。
    - v3：新增 `plannedItems`（柜子实例的预选待测清单）
    - v4：plannedItems 增加 `result`（0未测/1通过/2未通过）与 `faultId`（未通过关联的故障）
+   - v5：新增 `debuggers`（调试员名单；name唯一；合并时同id新者胜、按name去重、改名撞名跳过）
 
 ## 隐私声明
 

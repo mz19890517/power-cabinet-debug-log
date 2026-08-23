@@ -15,6 +15,7 @@ object SyncStore {
     private const val K_USER = "webdav_user"
     private const val K_PASS = "webdav_pass"
     private const val K_CURRENT = "current_user"
+    private const val K_LAST_DEBUGGER = "last_debugger"
     private const val K_AUTO = "auto_upload"
     private const val K_LAST_AUTO = "last_auto_sync"
 
@@ -50,6 +51,14 @@ object SyncStore {
 
     fun setCurrentUser(ctx: Context, user: String?) {
         prefs(ctx).edit().putString(K_CURRENT, user.orEmpty()).apply()
+    }
+
+    /** 最近一次写日志使用的调试员姓名（测试人员栏默认带出，与登录账号无关） */
+    fun lastDebugger(ctx: Context): String =
+        prefs(ctx).getString(K_LAST_DEBUGGER, "").orEmpty()
+
+    fun setLastDebugger(ctx: Context, name: String) {
+        prefs(ctx).edit().putString(K_LAST_DEBUGGER, name.trim()).apply()
     }
 
     /** 保存日志后是否自动上传快照（默认开：连上即基本免操作） */

@@ -184,4 +184,29 @@
     <string name="progress_detail_title">本柜预选测试项明细</string>
     <string name="log_marked_toast">已保存 ✓ 并自动标记 %1$d 项预选项目为"已通过"</string>
     <string name="edited_marker"> ·已改</string>
+
+    <!-- 调试员名单（v2.5） -->
+    <string name="debugger_manage">调试员管理</string>
+    <string name="debugger_desc">现场调试人员名册，与登录账号无关。日志「测试人员」从名单中选取；添加/改名/删除需超级口令，名单随同步互通到全队。</string>
+    <string name="debugger_summary_empty">调试员：暂无（点下方按钮添加）</string>
+    <string name="debugger_summary">调试员 %1$d 人：%2$s</string>
+    <string name="debugger_gate_title">操作验证</string>
+    <string name="debugger_gate_msg">管理调试员名单需要输入超级口令</string>
+    <string name="debugger_gate_hint">超级口令</string>
+    <string name="debugger_gate_wrong">口令不正确</string>
+    <string name="debugger_manager_title">调试员名单（%1$d人）\n点姓名可改名/删除</string>
+    <string name="debugger_add">添加</string>
+    <string name="debugger_rename">改名</string>
+    <string name="debugger_delete">删除</string>
+    <string name="debugger_name_hint">调试员姓名（如：张三）</string>
+    <string name="debugger_name_empty">姓名不能为空</string>
+    <string name="debugger_exists">该姓名已在名单中</string>
+    <string name="debugger_added">已添加：%1$s</string>
+    <string name="debugger_renamed">已改名：%1$s</string>
+    <string name="debugger_deleted">已删除：%1$s（历史日志保留原姓名）</string>
+    <string name="debugger_delete_confirm">删除调试员「%1$s」？\n历史日志不受影响，仍显示原姓名。</string>
+    <string name="close">关闭</string>
+    <string name="tester_pick_title">选择调试员</string>
+    <string name="tester_pick_hint">点击选择调试员</string>
+    <string name="debugger_empty_hint">尚无调试员。\n请先在工具页「调试员管理」中添加（需超级口令）。</string>
 </resources>

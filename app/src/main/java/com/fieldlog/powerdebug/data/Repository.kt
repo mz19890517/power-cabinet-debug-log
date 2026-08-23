@@ -6,6 +6,7 @@ import com.fieldlog.powerdebug.data.db.CabinetInstance
 import com.fieldlog.powerdebug.data.db.CabinetType
 import com.fieldlog.powerdebug.data.db.CandidateItem
 import com.fieldlog.powerdebug.data.db.DebugLog
+import com.fieldlog.powerdebug.data.db.Debugger
 import com.fieldlog.powerdebug.data.db.FaultExportRow
 import com.fieldlog.powerdebug.data.db.FaultRecord
 import com.fieldlog.powerdebug.data.db.InstanceStatusRow
@@ -37,7 +38,8 @@ data class MergeResult(
     var newInstances: Int = 0, var updInstances: Int = 0,
     var newLogs: Int = 0, var updLogs: Int = 0,
     var newFaults: Int = 0, var updFaults: Int = 0,
-    var newPlanned: Int = 0, var updPlanned: Int = 0
+    var newPlanned: Int = 0, var updPlanned: Int = 0,
+    var newDebuggers: Int = 0, var updDebuggers: Int = 0
 )
 
 /** 删除日志时，对其完成的预选待测项的处置方式（用户弹窗二选一） */
@@ -57,6 +59,7 @@ private class ParsedBackup {
     val logs = mutableListOf<DebugLog>()
     val faults = mutableListOf<FaultRecord>()
     val planned = mutableListOf<PlannedItem>()
+    val debuggers = mutableListOf<Debugger>()
 }
 
 /**
@@ -73,6 +76,7 @@ class Repository(private val db: AppDatabase) {
     private val logDao = db.debugLogDao()
     private val faultDao = db.faultRecordDao()
     private val plannedDao = db.plannedItemDao()
+    private val debuggerDao = db.debuggerDao()
 
     private fun newId() = UUID.randomUUID().toString()
     private fun now() = System.currentTimeMillis()
@@ -377,6 +381,38 @@ class Repository(private val db: AppDatabase) {
         return !existed
     }
 
+    // ---------- 调试员名单 ----------
+
+    suspend fun debuggers(): List<Debugger> = debuggerDao.allOnce()
+
+    /** 新增调试员；名字为空或已存在返回false */
+    suspend fun addDebugger(name: String): Boolean {
+        val n = name.trim()
+        if (n.isEmpty()) return false
+        if (debuggerDao.byNameOnce(n) != null) return false
+        debuggerDao.insert(Debugger(id = newId(), name = n))
+        return true
+    }
+
+    /**
+     * 改名。历史日志一律不动（用户约定：名单操作不影响已有数据）。
+     * 目标名已存在返回false。
+     */
+    suspend fun renameDebugger(id: String, newName: String): Boolean {
+        val n = newName.trim()
+        if (n.isEmpty()) return false
+        val hit = debuggerDao.byIdOnce(id) ?: return false
+        if (n == hit.name) return true
+        if (debuggerDao.byNameOnce(n) != null) return false
+        debuggerDao.updateAll(listOf(hit.copy(name = n, updatedAt = now())))
+        return true
+    }
+
+    /** 删除调试员，历史日志保留原姓名 */
+    suspend fun deleteDebugger(id: String) {
+        debuggerDao.byIdOnce(id)?.let { debuggerDao.delete(it) }
+    }
+
     // ---------- 统计 / 导出 / 备份 ----------
 
     suspend fun stats(): Stats = Stats(
@@ -392,7 +428,7 @@ class Repository(private val db: AppDatabase) {
 
     companion object {
         const val BACKUP_APP_TAG = "power-debug-log"
-        const val BACKUP_SCHEMA = 4
+        const val BACKUP_SCHEMA = 5
     }
 
     /**
@@ -401,6 +437,7 @@ class Repository(private val db: AppDatabase) {
      * schemaVersion 2：全表UUID主键+updatedAt合并时钟；日志含创建/修改账号。
      * schemaVersion 3：新增 plannedItems（柜子实例的预选待测清单）。
      * schemaVersion 4：plannedItems 增加三态结果 result 与关联故障 faultId。
+     * schemaVersion 5：新增 debuggers（调试员名单）。
      */
     suspend fun backupJson(): String {
         val jo = JSONObject()
@@ -474,6 +511,14 @@ class Repository(private val db: AppDatabase) {
                     .put("enabled", if (it.enabled) 1 else 0)
                     .put("doneAt", it.doneAt).put("logId", it.logId)
                     .put("result", it.result).put("faultId", it.faultId)
+                    .put("createdAt", it.createdAt).put("updatedAt", it.updatedAt)
+            })
+        )
+        jo.put(
+            "debuggers",
+            arr(debuggerDao.allOnce().map {
+                JSONObject()
+                    .put("id", it.id).put("name", it.name)
                     .put("createdAt", it.createdAt).put("updatedAt", it.updatedAt)
             })
         )
@@ -562,6 +607,15 @@ class Repository(private val db: AppDatabase) {
                         doneAt = optLong("doneAt"), logId = optString("logId"),
                         result = optInt("result", PlannedItem.RESULT_UNTESTED),
                         faultId = optString("faultId"),
+                        createdAt = optLong("createdAt"), updatedAt = optLong("updatedAt")
+                    )
+                }
+            }
+            // v5起新增；旧版备份（v2~v4）无此数组，静默跳过
+            root.optJSONArray("debuggers")?.let { a ->
+                for (i in 0 until a.length()) with(a.getJSONObject(i)) {
+                    pb.debuggers += Debugger(
+                        id = getString("id"), name = getString("name"),
                         createdAt = optLong("createdAt"), updatedAt = optLong("updatedAt")
                     )
                 }
@@ -668,6 +722,7 @@ class Repository(private val db: AppDatabase) {
         val logs = mutableListOf<DebugLog>()
         val faults = mutableListOf<FaultRecord>()
         val planned = mutableListOf<PlannedItem>()
+        val debuggers = mutableListOf<Debugger>()
 
         if (version >= 2) {
             root.optJSONArray("projects")?.let { a ->
@@ -743,6 +798,14 @@ class Repository(private val db: AppDatabase) {
                     )
                 }
             }
+            root.optJSONArray("debuggers")?.let { a ->
+                for (i in 0 until a.length()) with(a.getJSONObject(i)) {
+                    debuggers += Debugger(
+                        id = getString("id"), name = getString("name"),
+                        createdAt = optLong("createdAt"), updatedAt = optLong("updatedAt")
+                    )
+                }
+            }
         } else {
             // v1：解析后走同一套uuid重映射（复用parse逻辑）
             val pb = parseBackup(text)
@@ -755,6 +818,7 @@ class Repository(private val db: AppDatabase) {
             faultDao.wipe(); logDao.wipe(); instanceDao.wipe()
             candDao.wipe(); typeDao.wipe(); projectDao.wipe()
             plannedDao.wipe()
+            debuggerDao.wipe()
             projectDao.insertAll(projects)
             typeDao.insertAll(types)
             candDao.insertAll(cands)
@@ -762,6 +826,7 @@ class Repository(private val db: AppDatabase) {
             logDao.insertAll(logs)
             faultDao.upsertAll(faults)
             if (planned.isNotEmpty()) plannedDao.insertAll(planned)
+            if (debuggers.isNotEmpty()) debuggerDao.insertAll(debuggers)
         }
         return Stats(projects.size, types.size, instances.size, logs.size, faults.count { it.status == FaultRecord.STATUS_PENDING })
     }
@@ -791,6 +856,9 @@ class Repository(private val db: AppDatabase) {
         val lpl = plannedDao.allOnce()
         val lplById = lpl.associateBy { it.id }
         val lplPair = lpl.map { it.instanceId to it.content }.toHashSet()
+        val ld = debuggerDao.allOnce()
+        val ldById = ld.associateBy { it.id }
+        val ldNames = ld.map { it.name }.toHashSet()
 
         return MergeResult(
             newProjects = pb.projects.count { it.id !in lp },
@@ -805,7 +873,14 @@ class Repository(private val db: AppDatabase) {
             newFaults = pb.faults.count { it.id !in lf },
             updFaults = pb.faults.count { newer(lf.mapValues { it.value.updatedAt }, it.id, it.updatedAt) },
             newPlanned = pb.planned.count { it.id !in lplById && (it.instanceId to it.content) !in lplPair },
-            updPlanned = pb.planned.count { newer(lplById.mapValues { it.value.updatedAt }, it.id, it.updatedAt) }
+            updPlanned = pb.planned.count { newer(lplById.mapValues { it.value.updatedAt }, it.id, it.updatedAt) },
+            newDebuggers = pb.debuggers.count { it.id !in ldById && it.name !in ldNames },
+            updDebuggers = pb.debuggers.count { d ->
+                val local = ldById[d.id] ?: return@count false
+                if (d.updatedAt <= local.updatedAt) return@count false
+                // 改名目标与其他本地行重名时无法安全更新（唯一索引），跳过
+                ld.none { it.id != d.id && it.name == d.name }
+            }
         )
     }
 
@@ -859,6 +934,20 @@ class Repository(private val db: AppDatabase) {
             val updPl = pb.planned.filter { lplById[it.id]?.let { l -> it.updatedAt > l.updatedAt } == true }
             plannedDao.insertAll(insPl); plannedDao.updateAll(updPl)
             r.newPlanned = insPl.size; r.updPlanned = updPl.size
+
+            // 调试员名单：同id新者胜；按name去重（不同id同名只保留先到者）；
+            // 远端改名撞上本地已有姓名时跳过该行，避免唯一索引冲突
+            val ld = debuggerDao.allOnce()
+            val ldById = ld.associateBy { it.id }
+            val ldNames = ld.map { it.name }.toHashSet()
+            val insD = pb.debuggers.filter { it.id !in ldById && it.name !in ldNames }
+            val updD = pb.debuggers.filter { d ->
+                val local = ldById[d.id] ?: return@filter false
+                if (d.updatedAt <= local.updatedAt) return@filter false
+                ld.none { it.id != d.id && it.name == d.name }
+            }
+            debuggerDao.insertAll(insD); debuggerDao.updateAll(updD)
+            r.newDebuggers = insD.size; r.updDebuggers = updD.size
         }
         return r
     }

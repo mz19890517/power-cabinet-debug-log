@@ -73,18 +73,20 @@ object WebDavSync {
                 if (r.newLogs + r.updLogs + r.newFaults + r.updFaults +
                     r.newProjects + r.updProjects + r.newTypes + r.updTypes +
                     r.newInstances + r.updInstances + r.newCands +
-                    r.newPlanned + r.updPlanned > 0
+                    r.newPlanned + r.updPlanned +
+                    r.newDebuggers + r.updDebuggers > 0
                 ) {
                     val who = f.removePrefix("backup_").removeSuffix(".json")
                     parts.add(
                         "$who：日志+${r.newLogs}/改${r.updLogs} 故障+${r.newFaults}" +
-                            if (r.newPlanned + r.updPlanned > 0) " 待测+${r.newPlanned}/改${r.updPlanned}" else ""
+                            (if (r.newPlanned + r.updPlanned > 0) " 待测+${r.newPlanned}/改${r.updPlanned}" else "") +
+                            (if (r.newDebuggers + r.updDebuggers > 0) " 调试员+${r.newDebuggers}/改${r.updDebuggers}" else "")
                     )
                 }
                 totNewLogs += r.newLogs; totUpdLogs += r.updLogs
                 totNewFaults += r.newFaults; totUpdFaults += r.updFaults
                 totOtherNew += r.newProjects + r.newTypes + r.newInstances + r.newCands +
-                    r.newPlanned
+                    r.newPlanned + r.newDebuggers
             } catch (e: Exception) {
                 errors.add("${f.removePrefix("backup_").removeSuffix(".json")}(${e.message})")
             }
