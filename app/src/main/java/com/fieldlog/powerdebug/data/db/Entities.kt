@@ -139,6 +139,37 @@ data class FaultRecord(
     }
 }
 
+/**
+ * 柜子实例的预选待测清单：建实例时自动从所属类型的候选池复制初始清单。
+ * enabled=false 为临时停用；doneAt>0 表示已完成，logId 记录完成它的日志，
+ * 删除该日志时可选择"恢复为待测"或"连项删除"。
+ */
+@Entity(
+    tableName = "planned_items",
+    foreignKeys = [
+        ForeignKey(
+            entity = CabinetInstance::class,
+            parentColumns = ["id"],
+            childColumns = ["instanceId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [
+        Index("instanceId"),
+        Index(value = ["instanceId", "content"], unique = true)
+    ]
+)
+data class PlannedItem(
+    @PrimaryKey val id: String = "",
+    val instanceId: String,
+    val content: String,
+    val enabled: Boolean = true,
+    val doneAt: Long = 0,
+    val logId: String = "",
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
+)
+
 /** 测试员账号：登录 WebDAV 验证通过或超级密码注册后沉淀在本机，用于切换身份 */
 @Entity(
     tableName = "tester_accounts",
@@ -173,7 +204,16 @@ data class LogListItem(
 data class ProjectListItem(
     @Embedded val project: Project,
     val cabinetCount: Int,
-    val logCount: Int
+    val logCount: Int,
+    val pendingTests: Int,
+    val pendingFaults: Int
+)
+
+/** 项目详情页柜子行：柜子 + 实时待测/待处理统计 */
+data class InstanceStatusRow(
+    @Embedded val instance: CabinetInstance,
+    val pendingTests: Int,
+    val pendingFaults: Int
 )
 
 data class TypeListItem(

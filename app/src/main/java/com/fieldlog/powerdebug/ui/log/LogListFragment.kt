@@ -19,6 +19,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.fieldlog.powerdebug.App
 import com.fieldlog.powerdebug.R
+import com.fieldlog.powerdebug.data.LogDeleteMode
 import com.fieldlog.powerdebug.data.db.CabinetInstance
 import com.fieldlog.powerdebug.data.db.CabinetType
 import com.fieldlog.powerdebug.data.db.LogListItem
@@ -178,19 +179,47 @@ class LogListFragment : Fragment() {
     }
 
     private fun confirmDelete(item: LogListItem) {
-        AlertDialog.Builder(requireContext())
-            .setTitle(R.string.delete)
-            .setMessage(
-                "删除「${item.instanceName} · ${item.log.circuit.ifEmpty { getString(R.string.whole_cabinet) }}」这条日志？\n其下故障记录将一并删除。"
-            )
-            .setPositiveButton(R.string.confirm) { _, _ ->
-                viewLifecycleOwner.lifecycleScope.launch {
-                    App.repo.deleteLog(item.log.id)
-                    reload()
-                }
+        viewLifecycleOwner.lifecycleScope.launch {
+            val linked = App.repo.linkedPlannedOfLog(item.log.id)
+            if (linked.isEmpty()) {
+                AlertDialog.Builder(requireContext())
+                    .setTitle(R.string.delete)
+                    .setMessage(
+                        "删除「${item.instanceName} · ${item.log.circuit.ifEmpty { getString(R.string.whole_cabinet) }}」这条日志？\n其下故障记录将一并删除。"
+                    )
+                    .setPositiveButton(R.string.confirm) { _, _ ->
+                        viewLifecycleOwner.lifecycleScope.launch {
+                            App.repo.deleteLog(item.log.id, LogDeleteMode.RESTORE_PLANNED)
+                            reload()
+                        }
+                    }
+                    .setNegativeButton(R.string.cancel, null)
+                    .show()
+            } else {
+                // 该日志完成了预选待测项：让用户选择重测还是连项删除
+                AlertDialog.Builder(requireContext())
+                    .setTitle(R.string.delete)
+                    .setIcon(android.R.drawable.ic_dialog_alert)
+                    .setMessage(
+                        "删除「${item.instanceName} · ${item.log.circuit.ifEmpty { getString(R.string.whole_cabinet) }}」这条日志？\n" +
+                            "它完成了 ${linked.size} 项预选待测项目。\n其下故障记录将一并删除。"
+                    )
+                    .setPositiveButton(R.string.del_log_retest) { _, _ ->
+                        viewLifecycleOwner.lifecycleScope.launch {
+                            App.repo.deleteLog(item.log.id, LogDeleteMode.RESTORE_PLANNED)
+                            reload()
+                        }
+                    }
+                    .setNeutralButton(R.string.del_log_purge) { _, _ ->
+                        viewLifecycleOwner.lifecycleScope.launch {
+                            App.repo.deleteLog(item.log.id, LogDeleteMode.PURGE_PLANNED)
+                            reload()
+                        }
+                    }
+                    .setNegativeButton(R.string.cancel, null)
+                    .show()
             }
-            .setNegativeButton(R.string.cancel, null)
-            .show()
+        }
     }
 
     private fun logIntent(logId: String) =

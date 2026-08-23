@@ -8,7 +8,9 @@ import com.fieldlog.powerdebug.data.db.CandidateItem
 import com.fieldlog.powerdebug.data.db.DebugLog
 import com.fieldlog.powerdebug.data.db.FaultExportRow
 import com.fieldlog.powerdebug.data.db.FaultRecord
+import com.fieldlog.powerdebug.data.db.InstanceStatusRow
 import com.fieldlog.powerdebug.data.db.LogListItem
+import com.fieldlog.powerdebug.data.db.PlannedItem
 import com.fieldlog.powerdebug.data.db.Project
 import com.fieldlog.powerdebug.data.db.ProjectListItem
 import com.fieldlog.powerdebug.data.db.TesterAccount
@@ -34,8 +36,17 @@ data class MergeResult(
     var newCands: Int = 0,
     var newInstances: Int = 0, var updInstances: Int = 0,
     var newLogs: Int = 0, var updLogs: Int = 0,
-    var newFaults: Int = 0, var updFaults: Int = 0
+    var newFaults: Int = 0, var updFaults: Int = 0,
+    var newPlanned: Int = 0, var updPlanned: Int = 0
 )
+
+/** 删除日志时，对其完成的预选待测项的处置方式（用户弹窗二选一） */
+enum class LogDeleteMode {
+    /** 恢复为待测（重测） */
+    RESTORE_PLANNED,
+    /** 连预选项一起删除（该项可能是误添加的） */
+    PURGE_PLANNED
+}
 
 /** 备份文件解析结果：已统一为本机String主键的实体列表 */
 private class ParsedBackup {
@@ -45,6 +56,7 @@ private class ParsedBackup {
     val instances = mutableListOf<CabinetInstance>()
     val logs = mutableListOf<DebugLog>()
     val faults = mutableListOf<FaultRecord>()
+    val planned = mutableListOf<PlannedItem>()
 }
 
 /**
@@ -60,6 +72,7 @@ class Repository(private val db: AppDatabase) {
     private val instanceDao = db.instanceDao()
     private val logDao = db.debugLogDao()
     private val faultDao = db.faultRecordDao()
+    private val plannedDao = db.plannedItemDao()
 
     private fun newId() = UUID.randomUUID().toString()
     private fun now() = System.currentTimeMillis()
@@ -72,6 +85,10 @@ class Repository(private val db: AppDatabase) {
     fun watchTypes(): Flow<List<CabinetType>> = typeDao.watchAllAsFlow()
     fun watchInstancesOf(projectId: String): Flow<List<CabinetInstance>> =
         instanceDao.watchByProjectAsFlow(projectId)
+    fun watchInstancesWithStats(projectId: String): Flow<List<InstanceStatusRow>> =
+        instanceDao.watchByProjectWithStatsAsFlow(projectId)
+    fun watchPlannedOf(instanceId: String): Flow<List<PlannedItem>> =
+        plannedDao.watchByInstanceAsFlow(instanceId)
     fun watchPool(typeId: String): Flow<List<CandidateItem>> = candDao.watchByTypeAsFlow(typeId)
 
     // ---------- 项目 ----------
@@ -143,11 +160,31 @@ class Repository(private val db: AppDatabase) {
     suspend fun instancesOfProjectOnce(projectId: String) = instanceDao.byProjectOnce(projectId)
 
     suspend fun saveInstance(i: CabinetInstance): String {
+        val t = now()
+        val isNew = i.id.isBlank()
         val row =
-            if (i.id.isBlank()) i.copy(id = newId(), createdAt = now(), updatedAt = now())
-            else i.copy(updatedAt = now())
-        if (instanceDao.getByIdOnce(row.id) == null) instanceDao.insert(row) else instanceDao.update(row)
+            if (isNew) i.copy(id = newId(), createdAt = t, updatedAt = t)
+            else i.copy(updatedAt = t)
+        db.withTransaction {
+            if (instanceDao.getByIdOnce(row.id) == null) instanceDao.insert(row) else instanceDao.update(row)
+            // 新建柜子时把所属类型的候选池整份复制为该柜子的预选待测清单（快照式）
+            if (isNew) seedPlannedFromPool(row.id, row.typeId, t)
+        }
         return row.id
+    }
+
+    /** 把类型候选池中本柜还没有的条目补进预选清单，返回新增条数 */
+    suspend fun seedPlannedFromPool(instanceId: String, typeId: String, ts: Long = now()): Int {
+        val existing = plannedDao.contentsOnce(instanceId).map { it.trim() }.toHashSet()
+        val fresh = mutableListOf<PlannedItem>()
+        candDao.byTypeOnce(typeId).forEach { c ->
+            val text = c.content.trim()
+            if (text.isNotEmpty() && existing.add(text)) {
+                fresh += PlannedItem(id = newId(), instanceId = instanceId, content = text, createdAt = ts, updatedAt = ts)
+            }
+        }
+        plannedDao.insertAll(fresh)
+        return fresh.size
     }
 
     /** 返回该柜子的日志条数（用于确认弹窗），-1 表示不存在 */
@@ -173,6 +210,8 @@ class Repository(private val db: AppDatabase) {
     /**
      * 保存日志（新建或编辑）并同步故障记录；
      * 同时把测试内容中出现的新行自动沉淀进对应柜子类型的候选池。
+     * 预选待测联动：测试内容逐行匹配本柜待测项 → 自动标记完成并挂到本日志，
+     * 保证"开始测试"与手动录入两条通道的待测状态一致。
      * @param actor 当前登录测试账号，未登录传空串
      */
     suspend fun saveLog(log: DebugLog, faults: List<FaultRecord>, actor: String = "") {
@@ -199,6 +238,13 @@ class Repository(private val db: AppDatabase) {
             faults.forEach { f ->
                 faultDao.insert(f.copy(id = f.id.ifBlank { newId() }, logId = saved.id, updatedAt = t))
             }
+            // 预选待测联动：内容命中即标完成
+            if (saved.testContent.isNotBlank()) {
+                val lines = saved.testContent.split('\n').map { it.trim() }.filter { it.isNotEmpty() }.toHashSet()
+                val hits = plannedDao.pendingEnabledOnce(saved.instanceId)
+                    .filter { it.content.trim() in lines }
+                if (hits.isNotEmpty()) plannedDao.markDone(hits.map { it.id }, t, saved.id)
+            }
             // 候选池自动沉淀：测试内容逐行 trim、去重后追加
             val existing = candDao.contentsOnce(inst.typeId).map { it.trim() }.toHashSet()
             saved.testContent.split('\n')
@@ -208,9 +254,84 @@ class Repository(private val db: AppDatabase) {
         }
     }
 
-    suspend fun deleteLog(id: String) {
+    /** 该日志完成了哪些预选项（删除日志前的弹窗判断用） */
+    suspend fun linkedPlannedOfLog(logId: String): List<PlannedItem> = plannedDao.forLogOnce(logId)
+
+    /**
+     * 删除日志。若该日志由「开始测试」生成或曾匹配完成预选项，
+     * 由调用方先弹窗让用户选择：恢复为待测(重测) 或 连预选项一起删除(误添加)。
+     */
+    suspend fun deleteLog(id: String, mode: LogDeleteMode) {
         val l = logDao.getByIdOnce(id) ?: return
-        logDao.delete(l)
+        db.withTransaction {
+            when (mode) {
+                LogDeleteMode.RESTORE_PLANNED -> plannedDao.resetForLog(id, now())
+                LogDeleteMode.PURGE_PLANNED -> plannedDao.deleteForLog(id)
+            }
+            logDao.delete(l)
+        }
+    }
+
+    // ---------- 预选待测 ----------
+
+    /** 向某柜预选清单追加自定义条目（多行输入自动按行拆分去重），返回新增条数 */
+    suspend fun addPlannedFromText(instanceId: String, text: String): Int {
+        val existing = plannedDao.contentsOnce(instanceId).map { it.trim() }.toHashSet()
+        val fresh = mutableListOf<PlannedItem>()
+        text.split('\n')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && existing.add(it) }
+            .forEach { fresh += PlannedItem(id = newId(), instanceId = instanceId, content = it) }
+        plannedDao.insertAll(fresh)
+        return fresh.size
+    }
+
+    /** 从所属类型的候选池补充缺失条目，返回新增条数 */
+    suspend fun syncPlannedFromPool(instanceId: String, typeId: String): Int =
+        seedPlannedFromPool(instanceId, typeId)
+
+    suspend fun updatePlanned(item: PlannedItem) {
+        plannedDao.update(item.copy(updatedAt = now()))
+    }
+
+    suspend fun deletePlanned(item: PlannedItem) = plannedDao.delete(item)
+
+    /**
+     * 「开始测试」保存：勾选的预选项合并为一条日志（每行一项，整柜回路留空），
+     * 测试员优先取输入值、否则取当前登录账号；同时候选池沉淀。
+     * @return 新日志id
+     */
+    suspend fun startTestSave(
+        instanceId: String,
+        checkedIds: List<String>,
+        testerInput: String,
+        actor: String
+    ): String {
+        val inst = instanceDao.getByIdOnce(instanceId)
+            ?: throw IllegalArgumentException("柜子实例不存在")
+        require(checkedIds.isNotEmpty()) { "未勾选任何测试项" }
+        val t = now()
+        var outId = ""
+        db.withTransaction {
+            val items = plannedDao.byIdsOnce(checkedIds).filter { it.instanceId == instanceId }
+            require(items.isNotEmpty()) { "预选项目不存在" }
+            val content = items.sortedBy { it.createdAt }.joinToString("\n") { it.content }
+            val tester = testerInput.trim().ifEmpty { actor }
+            val log = DebugLog(
+                id = newId(), instanceId = instanceId, circuit = "",
+                testContent = content, tester = tester, remark = "",
+                createdBy = actor, updatedBy = actor, createdAt = t, updatedAt = t
+            )
+            logDao.insert(log)
+            plannedDao.markDone(items.map { it.id }, t, log.id)
+            val existing = candDao.contentsOnce(inst.typeId).map { it.trim() }.toHashSet()
+            content.split('\n')
+                .map { it.trim() }
+                .filter { it.isNotEmpty() && existing.add(it) }
+                .forEach { candDao.insert(CandidateItem(id = newId(), typeId = inst.typeId, content = it)) }
+            outId = log.id
+        }
+        return outId
     }
 
     suspend fun faultsOf(logId: String) = faultDao.forLogOnce(logId)
@@ -243,13 +364,14 @@ class Repository(private val db: AppDatabase) {
 
     companion object {
         const val BACKUP_APP_TAG = "power-debug-log"
-        const val BACKUP_SCHEMA = 2
+        const val BACKUP_SCHEMA = 3
     }
 
     /**
      * 备份为 JSON 字符串。该格式同时是后期 PC/网页端的官方数据交换格式：
      * 字段名即数据库列名，schemaVersion 变更时需提供迁移说明。
      * schemaVersion 2：全表UUID主键+updatedAt合并时钟；日志含创建/修改账号。
+     * schemaVersion 3：新增 plannedItems（柜子实例的预选待测清单）。
      */
     suspend fun backupJson(): String {
         val jo = JSONObject()
@@ -313,6 +435,16 @@ class Repository(private val db: AppDatabase) {
                     .put("symptom", it.symptom).put("solution", it.solution)
                     .put("occurredAt", it.occurredAt).put("resolvedAt", it.resolvedAt)
                     .put("status", it.status).put("updatedAt", it.updatedAt)
+            })
+        )
+        jo.put(
+            "plannedItems",
+            arr(plannedDao.allOnce().map {
+                JSONObject()
+                    .put("id", it.id).put("instanceId", it.instanceId).put("content", it.content)
+                    .put("enabled", if (it.enabled) 1 else 0)
+                    .put("doneAt", it.doneAt).put("logId", it.logId)
+                    .put("createdAt", it.createdAt).put("updatedAt", it.updatedAt)
             })
         )
         return jo.toString(2)
@@ -388,6 +520,17 @@ class Repository(private val db: AppDatabase) {
                         solution = optString("solution"), occurredAt = optLong("occurredAt"),
                         resolvedAt = optLong("resolvedAt"), status = optInt("status"),
                         updatedAt = optLong("updatedAt")
+                    )
+                }
+            }
+            root.optJSONArray("plannedItems")?.let { a ->
+                for (i in 0 until a.length()) with(a.getJSONObject(i)) {
+                    pb.planned += PlannedItem(
+                        id = getString("id"), instanceId = getString("instanceId"),
+                        content = getString("content"),
+                        enabled = optInt("enabled", 1) != 0,
+                        doneAt = optLong("doneAt"), logId = optString("logId"),
+                        createdAt = optLong("createdAt"), updatedAt = optLong("updatedAt")
                     )
                 }
             }
@@ -492,6 +635,7 @@ class Repository(private val db: AppDatabase) {
         val instances = mutableListOf<CabinetInstance>()
         val logs = mutableListOf<DebugLog>()
         val faults = mutableListOf<FaultRecord>()
+        val planned = mutableListOf<PlannedItem>()
 
         if (version >= 2) {
             root.optJSONArray("projects")?.let { a ->
@@ -554,22 +698,36 @@ class Repository(private val db: AppDatabase) {
                     )
                 }
             }
+            root.optJSONArray("plannedItems")?.let { a ->
+                for (i in 0 until a.length()) with(a.getJSONObject(i)) {
+                    planned += PlannedItem(
+                        id = getString("id"), instanceId = getString("instanceId"),
+                        content = getString("content"),
+                        enabled = optInt("enabled", 1) != 0,
+                        doneAt = optLong("doneAt"), logId = optString("logId"),
+                        createdAt = optLong("createdAt"), updatedAt = optLong("updatedAt")
+                    )
+                }
+            }
         } else {
             // v1：解析后走同一套uuid重映射（复用parse逻辑）
             val pb = parseBackup(text)
             projects += pb.projects; types += pb.types; cands += pb.cands
             instances += pb.instances; logs += pb.logs; faults += pb.faults
+            planned += pb.planned
         }
 
         db.withTransaction {
             faultDao.wipe(); logDao.wipe(); instanceDao.wipe()
             candDao.wipe(); typeDao.wipe(); projectDao.wipe()
+            plannedDao.wipe()
             projectDao.insertAll(projects)
             typeDao.insertAll(types)
             candDao.insertAll(cands)
             instanceDao.insertAll(instances)
             logDao.insertAll(logs)
             faultDao.upsertAll(faults)
+            if (planned.isNotEmpty()) plannedDao.insertAll(planned)
         }
         return Stats(projects.size, types.size, instances.size, logs.size, faults.count { it.status == FaultRecord.STATUS_PENDING })
     }
@@ -596,6 +754,9 @@ class Repository(private val db: AppDatabase) {
 
         val lcById = lc.associateBy { it.id }
         val lcPair = lc.map { it.typeId to it.content }.toHashSet()
+        val lpl = plannedDao.allOnce()
+        val lplById = lpl.associateBy { it.id }
+        val lplPair = lpl.map { it.instanceId to it.content }.toHashSet()
 
         return MergeResult(
             newProjects = pb.projects.count { it.id !in lp },
@@ -608,7 +769,9 @@ class Repository(private val db: AppDatabase) {
             newLogs = pb.logs.count { it.id !in ll },
             updLogs = pb.logs.count { newer(ll.mapValues { it.value.updatedAt }, it.id, it.updatedAt) },
             newFaults = pb.faults.count { it.id !in lf },
-            updFaults = pb.faults.count { newer(lf.mapValues { it.value.updatedAt }, it.id, it.updatedAt) }
+            updFaults = pb.faults.count { newer(lf.mapValues { it.value.updatedAt }, it.id, it.updatedAt) },
+            newPlanned = pb.planned.count { it.id !in lplById && (it.instanceId to it.content) !in lplPair },
+            updPlanned = pb.planned.count { newer(lplById.mapValues { it.value.updatedAt }, it.id, it.updatedAt) }
         )
     }
 
@@ -653,6 +816,15 @@ class Repository(private val db: AppDatabase) {
             val updF = pb.faults.filter { lf[it.id]?.let { l -> it.updatedAt > l.updatedAt } == true }
             faultDao.upsertAll(insF); faultDao.updateAll(updF)
             r.newFaults = insF.size; r.updFaults = updF.size
+
+            // 预选待测：同id新者胜；(柜子,内容) 相同但id不同视为同一项，IGNORE静默跳过
+            val lpl = plannedDao.allOnce()
+            val lplById = lpl.associateBy { it.id }
+            val lplPair = lpl.map { it.instanceId to it.content }.toHashSet()
+            val insPl = pb.planned.filter { it.id !in lplById && (it.instanceId to it.content) !in lplPair }
+            val updPl = pb.planned.filter { lplById[it.id]?.let { l -> it.updatedAt > l.updatedAt } == true }
+            plannedDao.insertAll(insPl); plannedDao.updateAll(updPl)
+            r.newPlanned = insPl.size; r.updPlanned = updPl.size
         }
         return r
     }

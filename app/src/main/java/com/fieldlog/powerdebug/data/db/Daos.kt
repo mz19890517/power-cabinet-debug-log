@@ -19,7 +19,12 @@ interface ProjectDao {
     @Query(
         """SELECT pr.*, 
         (SELECT COUNT(*) FROM instances i WHERE i.projectId = pr.id) AS cabinetCount,
-        (SELECT COUNT(*) FROM debug_logs l INNER JOIN instances i2 ON l.instanceId = i2.id WHERE i2.projectId = pr.id) AS logCount
+        (SELECT COUNT(*) FROM debug_logs l INNER JOIN instances i2 ON l.instanceId = i2.id WHERE i2.projectId = pr.id) AS logCount,
+        (SELECT COUNT(*) FROM planned_items pi INNER JOIN instances i3 ON pi.instanceId = i3.id
+            WHERE i3.projectId = pr.id AND pi.enabled = 1 AND pi.doneAt = 0) AS pendingTests,
+        (SELECT COUNT(*) FROM fault_records f INNER JOIN debug_logs l4 ON f.logId = l4.id
+            INNER JOIN instances i4 ON l4.instanceId = i4.id
+            WHERE i4.projectId = pr.id AND f.status = 0) AS pendingFaults
         FROM projects pr ORDER BY pr.createdAt DESC"""
     )
     fun watchListItemsAsFlow(): Flow<List<ProjectListItem>>
@@ -121,6 +126,16 @@ interface CandidateItemDao {
 interface InstanceDao {
     @Query("SELECT * FROM instances WHERE projectId = :projectId ORDER BY name")
     fun watchByProjectAsFlow(projectId: String): Flow<List<CabinetInstance>>
+
+    /** 项目详情页柜子行：附带实时待测数与待处理故障数（与调试日志页同源） */
+    @Query(
+        """SELECT i.*,
+        (SELECT COUNT(*) FROM planned_items pi WHERE pi.instanceId = i.id AND pi.enabled = 1 AND pi.doneAt = 0) AS pendingTests,
+        (SELECT COUNT(*) FROM fault_records f INNER JOIN debug_logs l ON f.logId = l.id
+            WHERE l.instanceId = i.id AND f.status = 0) AS pendingFaults
+        FROM instances i WHERE i.projectId = :projectId ORDER BY i.name"""
+    )
+    fun watchByProjectWithStatsAsFlow(projectId: String): Flow<List<InstanceStatusRow>>
 
     @Query("SELECT * FROM instances WHERE projectId = :projectId ORDER BY name")
     suspend fun byProjectOnce(projectId: String): List<CabinetInstance>
@@ -301,6 +316,60 @@ interface FaultRecordDao {
 
     @Query("SELECT COUNT(*) FROM fault_records WHERE status = 0")
     suspend fun countPending(): Int
+}
+
+@Dao
+interface PlannedItemDao {
+    @Query("SELECT * FROM planned_items WHERE instanceId = :instanceId ORDER BY doneAt, createdAt, id")
+    fun watchByInstanceAsFlow(instanceId: String): Flow<List<PlannedItem>>
+
+    @Query("SELECT * FROM planned_items WHERE instanceId = :instanceId ORDER BY doneAt, createdAt, id")
+    suspend fun byInstanceOnce(instanceId: String): List<PlannedItem>
+
+    @Query("SELECT content FROM planned_items WHERE instanceId = :instanceId")
+    suspend fun contentsOnce(instanceId: String): List<String>
+
+    @Query("SELECT * FROM planned_items WHERE id IN (:ids)")
+    suspend fun byIdsOnce(ids: List<String>): List<PlannedItem>
+
+    @Query("SELECT * FROM planned_items WHERE instanceId = :instanceId AND enabled = 1 AND doneAt = 0 ORDER BY createdAt, id")
+    suspend fun pendingEnabledOnce(instanceId: String): List<PlannedItem>
+
+    @Query("SELECT * FROM planned_items WHERE logId = :logId")
+    suspend fun forLogOnce(logId: String): List<PlannedItem>
+
+    @Query("SELECT * FROM planned_items ORDER BY updatedAt, id")
+    suspend fun allOnce(): List<PlannedItem>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insert(p: PlannedItem)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertAll(list: List<PlannedItem>)
+
+    @Update
+    suspend fun update(p: PlannedItem)
+
+    @Update
+    suspend fun updateAll(list: List<PlannedItem>)
+
+    @Delete
+    suspend fun delete(p: PlannedItem)
+
+    /** 批量标记完成并挂到生成它的日志上 */
+    @Query("UPDATE planned_items SET doneAt = :at, logId = :logId, updatedAt = :at WHERE id IN (:ids)")
+    suspend fun markDone(ids: List<String>, at: Long, logId: String)
+
+    /** 删除日志时选择"重测"：恢复为待测 */
+    @Query("UPDATE planned_items SET doneAt = 0, logId = '', updatedAt = :at WHERE logId = :logId")
+    suspend fun resetForLog(logId: String, at: Long)
+
+    /** 删除日志时选择"连项删除"：这些预选项可能是误添加的 */
+    @Query("DELETE FROM planned_items WHERE logId = :logId")
+    suspend fun deleteForLog(logId: String)
+
+    @Query("DELETE FROM planned_items")
+    suspend fun wipe()
 }
 
 @Dao

@@ -3,7 +3,10 @@ package com.fieldlog.powerdebug.ui.device
 import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.os.Bundle
+import android.text.SpannableStringBuilder
+import android.text.style.ForegroundColorSpan
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
@@ -17,10 +20,12 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.fieldlog.powerdebug.App
 import com.fieldlog.powerdebug.R
-import com.fieldlog.powerdebug.data.db.CabinetInstance
+import com.fieldlog.powerdebug.data.db.InstanceStatusRow
 import com.fieldlog.powerdebug.data.db.Project
 import com.fieldlog.powerdebug.databinding.ItemSimpleCardBinding
 import com.fieldlog.powerdebug.ui.log.LogEditActivity
+import com.fieldlog.powerdebug.ui.test.PlannedManageActivity
+import com.fieldlog.powerdebug.ui.test.TestChecklistActivity
 import kotlinx.coroutines.launch
 
 class ProjectDetailActivity : AppCompatActivity() {
@@ -35,6 +40,7 @@ class ProjectDetailActivity : AppCompatActivity() {
     private lateinit var adapter: InstanceAdapter
     private var typeNames: Map<String, String> = emptyMap()
     private var project: Project? = null
+    private var latestRows: List<InstanceStatusRow> = emptyList()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -51,8 +57,8 @@ class ProjectDetailActivity : AppCompatActivity() {
         }
 
         adapter = InstanceAdapter(
-            onClick = { showInstanceDialog(it) },
-            onLongClick = { showInstanceMenu(it) }
+            onClick = { showInstanceDialog(it.instance) },
+            onLongClick = { showInstanceMenu(it.instance) }
         )
         val rv = findViewById<RecyclerView>(R.id.rv_instances)
         rv.layoutManager = LinearLayoutManager(this)
@@ -61,27 +67,31 @@ class ProjectDetailActivity : AppCompatActivity() {
         findViewById<View>(R.id.btn_add_instance).setOnClickListener { showInstanceDialog(null) }
 
         lifecycleScope.launch {
-            App.db.instanceDao().watchByProjectAsFlow(projectId).collect { list ->
+            App.db.instanceDao().watchByProjectWithStatsAsFlow(projectId).collect { list ->
+                latestRows = list
                 adapter.submit(list)
                 findViewById<TextView>(R.id.tv_empty_instances).visibility =
                     if (list.isEmpty()) View.VISIBLE else View.GONE
-                refreshHeader()
+                refreshHeader(list)
             }
         }
 
         lifecycleScope.launch {
             project = App.repo.getProject(projectId)
             supportActionBar?.title = project?.name ?: getString(R.string.title_project_detail)
-            refreshHeader()
+            refreshHeader(latestRows)
         }
     }
 
-    private fun refreshHeader() {
+    private fun refreshHeader(rows: List<InstanceStatusRow>) {
         val p = project ?: return
+        val pendingTests = rows.sumOf { it.pendingTests }
+        val pendingFaults = rows.sumOf { it.pendingFaults }
         findViewById<TextView>(R.id.tv_project_info).text = buildString {
             appendLine("项目：${p.name}")
             if (p.code.isNotBlank()) appendLine("工程编号：${p.code}")
             if (p.remark.isNotBlank()) appendLine("备注：${p.remark}")
+            append("共 ${rows.size} 台柜子 · 待测 $pendingTests · 待处理故障 $pendingFaults")
         }
     }
 
@@ -125,7 +135,6 @@ class ProjectDetailActivity : AppCompatActivity() {
                     )
                     this@ProjectDetailActivity.project = App.repo.getProject(projectId)
                     supportActionBar?.title = this@ProjectDetailActivity.project?.name
-                    refreshHeader()
                 }
             }
             .setNegativeButton(R.string.cancel, null)
@@ -153,24 +162,33 @@ class ProjectDetailActivity : AppCompatActivity() {
 
     // ---------- 柜子实例 ----------
 
-    private fun showInstanceMenu(inst: CabinetInstance) {
+    private fun showInstanceMenu(inst: com.fieldlog.powerdebug.data.db.CabinetInstance) {
         AlertDialog.Builder(this)
             .setTitle(inst.name)
-            .setItems(arrayOf(getString(R.string.menu_log_new_here), getString(R.string.delete))) { _, which ->
+            .setItems(
+                arrayOf(
+                    getString(R.string.menu_start_test),
+                    getString(R.string.menu_manage_planned),
+                    getString(R.string.menu_log_new_here),
+                    getString(R.string.delete)
+                )
+            ) { _, which ->
                 when (which) {
-                    0 -> startActivity(
+                    0 -> startActivity(TestChecklistActivity.intent(this, inst.id))
+                    1 -> startActivity(PlannedManageActivity.intent(this, inst.id))
+                    2 -> startActivity(
                         Intent(this, LogEditActivity::class.java)
                             .putExtra(LogEditActivity.KEY_INSTANCE_ID, inst.id)
                             .putExtra(LogEditActivity.KEY_PROJECT_ID, projectId)
                     )
 
-                    1 -> confirmDeleteInstance(inst)
+                    3 -> confirmDeleteInstance(inst)
                 }
             }
             .show()
     }
 
-    private fun confirmDeleteInstance(inst: CabinetInstance) {
+    private fun confirmDeleteInstance(inst: com.fieldlog.powerdebug.data.db.CabinetInstance) {
         lifecycleScope.launch {
             val logs = App.db.debugLogDao().countLogsOf(inst.id)
             AlertDialog.Builder(this@ProjectDetailActivity)
@@ -185,7 +203,7 @@ class ProjectDetailActivity : AppCompatActivity() {
         }
     }
 
-    private fun showInstanceDialog(existing: CabinetInstance?) {
+    private fun showInstanceDialog(existing: com.fieldlog.powerdebug.data.db.CabinetInstance?) {
         val dlgView = layoutInflater.inflate(R.layout.dialog_instance_edit, null)
         val etName = dlgView.findViewById<EditText>(R.id.etInstName)
         val etCode = dlgView.findViewById<EditText>(R.id.etInstCode)
@@ -224,7 +242,7 @@ class ProjectDetailActivity : AppCompatActivity() {
                     val type = types.getOrNull(spType.selectedItemPosition) ?: return@setPositiveButton
                     lifecycleScope.launch {
                         App.repo.saveInstance(
-                            CabinetInstance(
+                            com.fieldlog.powerdebug.data.db.CabinetInstance(
                                 id = existing?.id.orEmpty(),
                                 projectId = projectId,
                                 typeId = type.id,
@@ -235,6 +253,11 @@ class ProjectDetailActivity : AppCompatActivity() {
                                 createdAt = existing?.createdAt ?: System.currentTimeMillis()
                             )
                         )
+                        Toast.makeText(
+                            this@ProjectDetailActivity,
+                            R.string.planned_seeded_hint,
+                            Toast.LENGTH_SHORT
+                        ).show()
                     }
                 }
                 .setNegativeButton(R.string.cancel, null)
@@ -245,13 +268,13 @@ class ProjectDetailActivity : AppCompatActivity() {
     // ---------- 适配器 ----------
 
     private inner class InstanceAdapter(
-        private val onClick: (CabinetInstance) -> Unit,
-        private val onLongClick: (CabinetInstance) -> Unit
+        private val onClick: (InstanceStatusRow) -> Unit,
+        private val onLongClick: (InstanceStatusRow) -> Unit
     ) : RecyclerView.Adapter<InstanceAdapter.VH>() {
 
-        private val data = mutableListOf<CabinetInstance>()
+        private val data = mutableListOf<InstanceStatusRow>()
 
-        fun submit(list: List<CabinetInstance>) {
+        fun submit(list: List<InstanceStatusRow>) {
             data.clear(); data.addAll(list); notifyDataSetChanged()
         }
 
@@ -263,16 +286,35 @@ class ProjectDetailActivity : AppCompatActivity() {
         override fun getItemCount() = data.size
 
         override fun onBindViewHolder(h: VH, pos: Int) {
-            val item = data[pos]
+            val row = data[pos]
+            val item = row.instance
             h.ib.tvName.text = item.name
-            h.ib.tvSub.text = buildString {
+            val base = buildString {
                 append(typeNames[item.typeId].orEmpty())
                 if (item.deviceCode.isNotBlank()) append(" · 编号:${item.deviceCode}")
                 if (item.location.isNotBlank()) append(" · ${item.location}")
                 if (item.installer.isNotBlank()) append(" · 安装:${item.installer}")
             }
-            h.ib.root.setOnClickListener { onClick(item) }
-            h.ib.root.setOnLongClickListener { onLongClick(item); true }
+            val statusText = "  待测 ${row.pendingTests} · 待处理故障 ${row.pendingFaults}"
+            val ssb = SpannableStringBuilder(base).append(statusText)
+            if (row.pendingTests > 0 || row.pendingFaults > 0) {
+                ssb.setSpan(
+                    ForegroundColorSpan(Color.parseColor("#B8860B")),
+                    base.length, ssb.length,
+                    SpannableStringBuilder.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            }
+            if (row.pendingFaults > 0) {
+                val start = base.length + "  待测 ${row.pendingTests} · ".length
+                ssb.setSpan(
+                    ForegroundColorSpan(Color.parseColor("#D32F2F")),
+                    start, ssb.length,
+                    SpannableStringBuilder.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            }
+            h.ib.tvSub.text = ssb
+            h.ib.root.setOnClickListener { onClick(row) }
+            h.ib.root.setOnLongClickListener { onLongClick(row); true }
         }
     }
 }

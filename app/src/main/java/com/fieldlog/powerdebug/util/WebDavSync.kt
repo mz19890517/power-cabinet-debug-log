@@ -72,14 +72,19 @@ object WebDavSync {
                 val r: MergeResult = App.repo.mergeJson(text)
                 if (r.newLogs + r.updLogs + r.newFaults + r.updFaults +
                     r.newProjects + r.updProjects + r.newTypes + r.updTypes +
-                    r.newInstances + r.updInstances + r.newCands > 0
+                    r.newInstances + r.updInstances + r.newCands +
+                    r.newPlanned + r.updPlanned > 0
                 ) {
                     val who = f.removePrefix("backup_").removeSuffix(".json")
-                    parts.add("$who：日志+${r.newLogs}/改${r.updLogs} 故障+${r.newFaults}")
+                    parts.add(
+                        "$who：日志+${r.newLogs}/改${r.updLogs} 故障+${r.newFaults}" +
+                            if (r.newPlanned + r.updPlanned > 0) " 待测+${r.newPlanned}/改${r.updPlanned}" else ""
+                    )
                 }
                 totNewLogs += r.newLogs; totUpdLogs += r.updLogs
                 totNewFaults += r.newFaults; totUpdFaults += r.updFaults
-                totOtherNew += r.newProjects + r.newTypes + r.newInstances + r.newCands
+                totOtherNew += r.newProjects + r.newTypes + r.newInstances + r.newCands +
+                    r.newPlanned
             } catch (e: Exception) {
                 errors.add("${f.removePrefix("backup_").removeSuffix(".json")}(${e.message})")
             }

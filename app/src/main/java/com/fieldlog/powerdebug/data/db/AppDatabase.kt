@@ -15,9 +15,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         CabinetInstance::class,
         DebugLog::class,
         FaultRecord::class,
+        PlannedItem::class,
         TesterAccount::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -27,6 +28,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun instanceDao(): InstanceDao
     abstract fun debugLogDao(): DebugLogDao
     abstract fun faultRecordDao(): FaultRecordDao
+    abstract fun plannedItemDao(): PlannedItemDao
     abstract fun testerAccountDao(): TesterAccountDao
 
     companion object {
@@ -178,9 +180,29 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** v2→v3：新增预选待测清单表 planned_items（柜子实例级，建实例时从类型候选池复制初始清单） */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `planned_items` (" +
+                        "`id` TEXT NOT NULL, `instanceId` TEXT NOT NULL, `content` TEXT NOT NULL, " +
+                        "`enabled` INTEGER NOT NULL, `doneAt` INTEGER NOT NULL, `logId` TEXT NOT NULL, " +
+                        "`createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`id`), " +
+                        "FOREIGN KEY(`instanceId`) REFERENCES `instances`(`id`) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE )"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_planned_items_instanceId` ON `planned_items` (`instanceId`)"
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_planned_items_instanceId_content` ON `planned_items` (`instanceId`, `content`)"
+                )
+            }
+        }
+
         fun build(context: Context): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, DB_NAME)
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build()
     }
 }
