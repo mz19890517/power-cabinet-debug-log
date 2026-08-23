@@ -18,7 +18,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         PlannedItem::class,
         TesterAccount::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -200,9 +200,17 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** v3→v4：预选待测项增加三态结果（0未测/1通过/2未通过）与关联故障id */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `planned_items` ADD COLUMN `result` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `planned_items` ADD COLUMN `faultId` TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         fun build(context: Context): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, DB_NAME)
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build()
     }
 }

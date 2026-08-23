@@ -1,5 +1,6 @@
 package com.fieldlog.powerdebug.data.db
 
+import androidx.room.ColumnInfo
 import androidx.room.Embedded
 import androidx.room.Entity
 import androidx.room.ForeignKey
@@ -141,8 +142,9 @@ data class FaultRecord(
 
 /**
  * 柜子实例的预选待测清单：建实例时自动从所属类型的候选池复制初始清单。
- * enabled=false 为临时停用；doneAt>0 表示已完成，logId 记录完成它的日志，
- * 删除该日志时可选择"恢复为待测"或"连项删除"。
+ * enabled=false 为临时停用；result 三态：0未测 / 1通过 / 2未通过；
+ * doneAt=最近一次测试时间，logId=完成它的日志，
+ * result=2 时 faultId 指向该次未通过产生的故障记录（原因）。
  */
 @Entity(
     tableName = "planned_items",
@@ -164,11 +166,22 @@ data class PlannedItem(
     val instanceId: String,
     val content: String,
     val enabled: Boolean = true,
+    /** 最近一次测试时间；0=从未测过 */
     val doneAt: Long = 0,
     val logId: String = "",
+    /** 0=未测 1=通过 2=未通过 */
+    @ColumnInfo(defaultValue = "0") val result: Int = RESULT_UNTESTED,
+    /** 未通过时关联的故障记录id */
+    @ColumnInfo(defaultValue = "") val faultId: String = "",
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
-)
+) {
+    companion object {
+        const val RESULT_UNTESTED = 0
+        const val RESULT_PASS = 1
+        const val RESULT_FAIL = 2
+    }
+}
 
 /** 测试员账号：登录 WebDAV 验证通过或超级密码注册后沉淀在本机，用于切换身份 */
 @Entity(
@@ -206,13 +219,15 @@ data class ProjectListItem(
     val cabinetCount: Int,
     val logCount: Int,
     val pendingTests: Int,
+    val failedTests: Int,
     val pendingFaults: Int
 )
 
-/** 项目详情页柜子行：柜子 + 实时待测/待处理统计 */
+/** 项目详情页柜子行：柜子 + 实时待测/未通过/待处理统计 */
 data class InstanceStatusRow(
     @Embedded val instance: CabinetInstance,
     val pendingTests: Int,
+    val failedTests: Int,
     val pendingFaults: Int
 )
 

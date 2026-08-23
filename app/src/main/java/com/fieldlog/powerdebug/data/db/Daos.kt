@@ -21,7 +21,9 @@ interface ProjectDao {
         (SELECT COUNT(*) FROM instances i WHERE i.projectId = pr.id) AS cabinetCount,
         (SELECT COUNT(*) FROM debug_logs l INNER JOIN instances i2 ON l.instanceId = i2.id WHERE i2.projectId = pr.id) AS logCount,
         (SELECT COUNT(*) FROM planned_items pi INNER JOIN instances i3 ON pi.instanceId = i3.id
-            WHERE i3.projectId = pr.id AND pi.enabled = 1 AND pi.doneAt = 0) AS pendingTests,
+            WHERE i3.projectId = pr.id AND pi.enabled = 1 AND pi.result = 0) AS pendingTests,
+        (SELECT COUNT(*) FROM planned_items pi5 INNER JOIN instances i5 ON pi5.instanceId = i5.id
+            WHERE i5.projectId = pr.id AND pi5.enabled = 1 AND pi5.result = 2) AS failedTests,
         (SELECT COUNT(*) FROM fault_records f INNER JOIN debug_logs l4 ON f.logId = l4.id
             INNER JOIN instances i4 ON l4.instanceId = i4.id
             WHERE i4.projectId = pr.id AND f.status = 0) AS pendingFaults
@@ -127,10 +129,11 @@ interface InstanceDao {
     @Query("SELECT * FROM instances WHERE projectId = :projectId ORDER BY name")
     fun watchByProjectAsFlow(projectId: String): Flow<List<CabinetInstance>>
 
-    /** 项目详情页柜子行：附带实时待测数与待处理故障数（与调试日志页同源） */
+    /** 项目详情页柜子行：附带实时待测/未通过/待处理故障数（与调试日志页同源） */
     @Query(
         """SELECT i.*,
-        (SELECT COUNT(*) FROM planned_items pi WHERE pi.instanceId = i.id AND pi.enabled = 1 AND pi.doneAt = 0) AS pendingTests,
+        (SELECT COUNT(*) FROM planned_items pi WHERE pi.instanceId = i.id AND pi.enabled = 1 AND pi.result = 0) AS pendingTests,
+        (SELECT COUNT(*) FROM planned_items pi2 WHERE pi2.instanceId = i.id AND pi2.enabled = 1 AND pi2.result = 2) AS failedTests,
         (SELECT COUNT(*) FROM fault_records f INNER JOIN debug_logs l ON f.logId = l.id
             WHERE l.instanceId = i.id AND f.status = 0) AS pendingFaults
         FROM instances i WHERE i.projectId = :projectId ORDER BY i.name"""
@@ -286,6 +289,9 @@ interface FaultRecordDao {
     @Query("SELECT * FROM fault_records WHERE logId = :logId ORDER BY occurredAt")
     suspend fun forLogOnce(logId: String): List<FaultRecord>
 
+    @Query("SELECT * FROM fault_records WHERE id IN (:ids)")
+    suspend fun byIdsOnce(ids: List<String>): List<FaultRecord>
+
     @Query(
         """SELECT f.*, p.name AS projectName, i.name AS instanceName, i.deviceCode AS deviceCode
         FROM fault_records f
@@ -320,11 +326,12 @@ interface FaultRecordDao {
 
 @Dao
 interface PlannedItemDao {
-    @Query("SELECT * FROM planned_items WHERE instanceId = :instanceId ORDER BY doneAt, createdAt, id")
+    /** 管理页：未完成(未测+未通过)在前，未通过的排最前 */
+    @Query(
+        """SELECT * FROM planned_items WHERE instanceId = :instanceId 
+        ORDER BY CASE WHEN result = 1 THEN 1 ELSE 0 END, result DESC, createdAt, id"""
+    )
     fun watchByInstanceAsFlow(instanceId: String): Flow<List<PlannedItem>>
-
-    @Query("SELECT * FROM planned_items WHERE instanceId = :instanceId ORDER BY doneAt, createdAt, id")
-    suspend fun byInstanceOnce(instanceId: String): List<PlannedItem>
 
     @Query("SELECT content FROM planned_items WHERE instanceId = :instanceId")
     suspend fun contentsOnce(instanceId: String): List<String>
@@ -332,8 +339,15 @@ interface PlannedItemDao {
     @Query("SELECT * FROM planned_items WHERE id IN (:ids)")
     suspend fun byIdsOnce(ids: List<String>): List<PlannedItem>
 
-    @Query("SELECT * FROM planned_items WHERE instanceId = :instanceId AND enabled = 1 AND doneAt = 0 ORDER BY createdAt, id")
-    suspend fun pendingEnabledOnce(instanceId: String): List<PlannedItem>
+    /** 开始测试清单：启用且尚未通过(含上次未通过，供复测) */
+    @Query(
+        """SELECT * FROM planned_items WHERE instanceId = :instanceId AND enabled = 1 AND result <> 1 
+        ORDER BY result DESC, createdAt, id"""
+    )
+    suspend fun pendingForTestOnce(instanceId: String): List<PlannedItem>
+
+    @Query("SELECT * FROM planned_items WHERE instanceId = :instanceId ORDER BY result, createdAt, id")
+    suspend fun allOfInstanceOnce(instanceId: String): List<PlannedItem>
 
     @Query("SELECT * FROM planned_items WHERE logId = :logId")
     suspend fun forLogOnce(logId: String): List<PlannedItem>
@@ -356,12 +370,15 @@ interface PlannedItemDao {
     @Delete
     suspend fun delete(p: PlannedItem)
 
-    /** 批量标记完成并挂到生成它的日志上 */
-    @Query("UPDATE planned_items SET doneAt = :at, logId = :logId, updatedAt = :at WHERE id IN (:ids)")
-    suspend fun markDone(ids: List<String>, at: Long, logId: String)
+    /** 批量记录测试结果并挂到生成它的日志上（未通过时逐项携带faultId） */
+    @Query(
+        "UPDATE planned_items SET result = :result, doneAt = :at, logId = :logId, " +
+            "faultId = :faultId, updatedAt = :at WHERE id IN (:ids)"
+    )
+    suspend fun setResult(ids: List<String>, result: Int, at: Long, logId: String, faultId: String)
 
-    /** 删除日志时选择"重测"：恢复为待测 */
-    @Query("UPDATE planned_items SET doneAt = 0, logId = '', updatedAt = :at WHERE logId = :logId")
+    /** 删除日志时选择"重测"：恢复为未测 */
+    @Query("UPDATE planned_items SET result = 0, doneAt = 0, logId = '', faultId = '', updatedAt = :at WHERE logId = :logId")
     suspend fun resetForLog(logId: String, at: Long)
 
     /** 删除日志时选择"连项删除"：这些预选项可能是误添加的 */

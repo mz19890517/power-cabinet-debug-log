@@ -86,12 +86,13 @@ class ProjectDetailActivity : AppCompatActivity() {
     private fun refreshHeader(rows: List<InstanceStatusRow>) {
         val p = project ?: return
         val pendingTests = rows.sumOf { it.pendingTests }
+        val failedTests = rows.sumOf { it.failedTests }
         val pendingFaults = rows.sumOf { it.pendingFaults }
         findViewById<TextView>(R.id.tv_project_info).text = buildString {
             appendLine("项目：${p.name}")
             if (p.code.isNotBlank()) appendLine("工程编号：${p.code}")
             if (p.remark.isNotBlank()) appendLine("备注：${p.remark}")
-            append("共 ${rows.size} 台柜子 · 待测 $pendingTests · 待处理故障 $pendingFaults")
+            append("共 ${rows.size} 台柜子 · 待测 $pendingTests · 未通过 $failedTests · 待处理故障 $pendingFaults")
         }
     }
 
@@ -295,17 +296,19 @@ class ProjectDetailActivity : AppCompatActivity() {
                 if (item.location.isNotBlank()) append(" · ${item.location}")
                 if (item.installer.isNotBlank()) append(" · 安装:${item.installer}")
             }
-            val statusText = "  待测 ${row.pendingTests} · 待处理故障 ${row.pendingFaults}"
-            val ssb = SpannableStringBuilder(base).append(statusText)
-            if (row.pendingTests > 0 || row.pendingFaults > 0) {
+            val midPart = "  待测 ${row.pendingTests} · "
+            val failPart = "未通过 ${row.failedTests}"
+            val faultPart = " · 待处理故障 ${row.pendingFaults}"
+            val ssb = SpannableStringBuilder(base).append(midPart).append(failPart).append(faultPart)
+            if (row.pendingTests > 0) {
                 ssb.setSpan(
                     ForegroundColorSpan(Color.parseColor("#B8860B")),
-                    base.length, ssb.length,
+                    base.length, base.length + midPart.length,
                     SpannableStringBuilder.SPAN_EXCLUSIVE_EXCLUSIVE
                 )
             }
-            if (row.pendingFaults > 0) {
-                val start = base.length + "  待测 ${row.pendingTests} · ".length
+            if (row.failedTests > 0 || row.pendingFaults > 0) {
+                val start = base.length + midPart.length
                 ssb.setSpan(
                     ForegroundColorSpan(Color.parseColor("#D32F2F")),
                     start, ssb.length,

@@ -59,7 +59,12 @@ class PlannedManageActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             App.repo.watchPlannedOf(instanceId).collect { list ->
-                adapter.submit(list)
+                // 未通过项带出故障原因摘要
+                val faultIds = list.map { it.faultId }.filter { it.isNotEmpty() }
+                val reasons = if (faultIds.isNotEmpty())
+                    App.db.faultRecordDao().byIdsOnce(faultIds).associate { it.id to it.symptom }
+                else emptyMap()
+                adapter.submit(list, reasons)
                 findViewById<TextView>(R.id.tv_planned_empty).visibility =
                     if (list.isEmpty()) View.VISIBLE else View.GONE
                 findViewById<RecyclerView>(R.id.rv_planned).visibility =
@@ -97,18 +102,22 @@ class PlannedManageActivity : AppCompatActivity() {
     }
 
     private suspend fun refreshInfo(list: List<PlannedItem>) {
-        val pending = list.count { it.enabled && it.doneAt == 0L }
-        val done = list.count { it.doneAt > 0 }
-        val disabled = list.count { !it.enabled && it.doneAt == 0L }
+        val pending = list.count { it.enabled && it.result == PlannedItem.RESULT_UNTESTED }
+        val failed = list.count { it.enabled && it.result == PlannedItem.RESULT_FAIL }
+        val passed = list.count { it.result == PlannedItem.RESULT_PASS }
+        val disabled = list.count { !it.enabled && it.result != PlannedItem.RESULT_PASS }
         findViewById<TextView>(R.id.tv_info).text =
-            getString(R.string.planned_stat_fmt, list.size, pending, done, disabled)
+            getString(R.string.planned_stat_fmt, list.size, pending, failed, passed, disabled)
     }
 
     private inner class PlannedAdapter : RecyclerView.Adapter<PlannedVH>() {
         private val data = mutableListOf<PlannedItem>()
+        private val reasons = mutableMapOf<String, String>()
 
-        fun submit(list: List<PlannedItem>) {
-            data.clear(); data.addAll(list); notifyDataSetChanged()
+        fun submit(list: List<PlannedItem>, reasonMap: Map<String, String>) {
+            data.clear(); data.addAll(list)
+            reasons.clear(); reasons.putAll(reasonMap)
+            notifyDataSetChanged()
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) =
@@ -122,26 +131,38 @@ class PlannedManageActivity : AppCompatActivity() {
             h.cbEnabled.isChecked = item.enabled
             h.tvText.text = item.content
             h.tvStatus.text = when {
-                item.doneAt > 0 -> getString(R.string.planned_done_fmt, DT.full(item.doneAt))
+                item.result == PlannedItem.RESULT_PASS ->
+                    getString(R.string.planned_pass_fmt, DT.full(item.doneAt))
+                item.result == PlannedItem.RESULT_FAIL ->
+                    getString(
+                        R.string.planned_fail_fmt,
+                        DT.full(item.doneAt),
+                        reasons[item.faultId] ?: getString(R.string.planned_reason_in_log)
+                    )
                 !item.enabled -> getString(R.string.planned_disabled)
                 else -> getString(R.string.planned_pending)
             }
             h.tvStatus.setTextColor(
-                if (item.doneAt > 0) android.graphics.Color.parseColor("#2E7D32")
-                else android.graphics.Color.GRAY
+                when {
+                    item.result == PlannedItem.RESULT_PASS -> android.graphics.Color.parseColor("#2E7D32")
+                    item.result == PlannedItem.RESULT_FAIL -> android.graphics.Color.parseColor("#D32F2F")
+                    else -> android.graphics.Color.GRAY
+                }
             )
             h.cbEnabled.setOnCheckedChangeListener { _, checked ->
                 lifecycleScope.launch { App.repo.updatePlanned(item.copy(enabled = checked)) }
             }
-            // 点已完成项：可撤销完成（恢复待测）
+            // 点已测项：可撤销本次结果（恢复未测，重测）
             h.tvText.setOnClickListener {
-                if (item.doneAt > 0) {
+                if (item.result != PlannedItem.RESULT_UNTESTED) {
                     AlertDialog.Builder(this@PlannedManageActivity)
                         .setTitle(R.string.planned_undo_title)
                         .setMessage(item.content)
                         .setPositiveButton(R.string.confirm) { _, _ ->
                             lifecycleScope.launch {
-                                App.repo.updatePlanned(item.copy(doneAt = 0, logId = ""))
+                                App.repo.updatePlanned(
+                                    item.copy(result = PlannedItem.RESULT_UNTESTED, doneAt = 0, logId = "", faultId = "")
+                                )
                             }
                         }
                         .setNegativeButton(R.string.cancel, null)

@@ -210,15 +210,15 @@ class Repository(private val db: AppDatabase) {
     /**
      * 保存日志（新建或编辑）并同步故障记录；
      * 同时把测试内容中出现的新行自动沉淀进对应柜子类型的候选池。
-     * 预选待测联动：测试内容逐行匹配本柜待测项 → 自动标记完成并挂到本日志，
-     * 保证"开始测试"与手动录入两条通道的待测状态一致。
-     * @param actor 当前登录测试账号，未登录传空串
+     * 预选待测联动：测试内容逐行（宽容匹配：忽略行尾标点）命中本柜未完成项 → 标记为"通过"并挂到本日志。
+     * @return 本次自动标记为通过的预选项数量
      */
-    suspend fun saveLog(log: DebugLog, faults: List<FaultRecord>, actor: String = "") {
+    suspend fun saveLog(log: DebugLog, faults: List<FaultRecord>, actor: String = ""): Int {
         val inst = instanceDao.getByIdOnce(log.instanceId)
             ?: throw IllegalArgumentException("柜子实例不存在")
         val t = now()
         var saved: DebugLog
+        var markedCount = 0
         db.withTransaction {
             saved =
                 if (log.id.isBlank())
@@ -238,12 +238,15 @@ class Repository(private val db: AppDatabase) {
             faults.forEach { f ->
                 faultDao.insert(f.copy(id = f.id.ifBlank { newId() }, logId = saved.id, updatedAt = t))
             }
-            // 预选待测联动：内容命中即标完成
+            // 预选待测联动：内容命中即标"通过"
             if (saved.testContent.isNotBlank()) {
-                val lines = saved.testContent.split('\n').map { it.trim() }.filter { it.isNotEmpty() }.toHashSet()
-                val hits = plannedDao.pendingEnabledOnce(saved.instanceId)
-                    .filter { it.content.trim() in lines }
-                if (hits.isNotEmpty()) plannedDao.markDone(hits.map { it.id }, t, saved.id)
+                val lines = saved.testContent.split('\n').map(::normLine).filter { it.isNotEmpty() }.toHashSet()
+                val hits = plannedDao.pendingForTestOnce(saved.instanceId)
+                    .filter { normLine(it.content) in lines }
+                if (hits.isNotEmpty()) {
+                    plannedDao.setResult(hits.map { it.id }, PlannedItem.RESULT_PASS, t, saved.id, "")
+                    markedCount = hits.size
+                }
             }
             // 候选池自动沉淀：测试内容逐行 trim、去重后追加
             val existing = candDao.contentsOnce(inst.typeId).map { it.trim() }.toHashSet()
@@ -252,7 +255,12 @@ class Repository(private val db: AppDatabase) {
                 .filter { it.isNotEmpty() && existing.add(it) }
                 .forEach { candDao.insert(CandidateItem(id = newId(), typeId = inst.typeId, content = it)) }
         }
+        return markedCount
     }
+
+    /** 行规范化：去首尾空白与行尾常用标点，减少手打措辞差异导致的漏配 */
+    private fun normLine(s: String): String =
+        s.trim().trimEnd('。', '，', '；', '、', '！', '？', '!', '?', ',', ';', ' ')
 
     /** 该日志完成了哪些预选项（删除日志前的弹窗判断用） */
     suspend fun linkedPlannedOfLog(logId: String): List<PlannedItem> = plannedDao.forLogOnce(logId)
@@ -297,23 +305,27 @@ class Repository(private val db: AppDatabase) {
     suspend fun deletePlanned(item: PlannedItem) = plannedDao.delete(item)
 
     /**
-     * 「开始测试」保存：勾选的预选项合并为一条日志（每行一项，整柜回路留空），
+     * 「开始测试」保存：✓通过项与✗未通过项合并为同一条日志（每行一项，整柜回路留空），
+     * 未通过项逐个生成故障记录（现象=现场必填内容，状态待处理）挂到日志下；
      * 测试员优先取输入值、否则取当前登录账号；同时候选池沉淀。
+     * @param failedItems 未通过项：预选项id to 故障现象（必填）
      * @return 新日志id
      */
     suspend fun startTestSave(
         instanceId: String,
-        checkedIds: List<String>,
+        passIds: List<String>,
+        failedItems: List<Pair<String, String>>,
         testerInput: String,
         actor: String
     ): String {
         val inst = instanceDao.getByIdOnce(instanceId)
             ?: throw IllegalArgumentException("柜子实例不存在")
-        require(checkedIds.isNotEmpty()) { "未勾选任何测试项" }
+        require(passIds.isNotEmpty() || failedItems.isNotEmpty()) { "未勾选任何测试项" }
         val t = now()
         var outId = ""
         db.withTransaction {
-            val items = plannedDao.byIdsOnce(checkedIds).filter { it.instanceId == instanceId }
+            val allIds = passIds + failedItems.map { it.first }
+            val items = plannedDao.byIdsOnce(allIds).filter { it.instanceId == instanceId }
             require(items.isNotEmpty()) { "预选项目不存在" }
             val content = items.sortedBy { it.createdAt }.joinToString("\n") { it.content }
             val tester = testerInput.trim().ifEmpty { actor }
@@ -323,7 +335,23 @@ class Repository(private val db: AppDatabase) {
                 createdBy = actor, updatedBy = actor, createdAt = t, updatedAt = t
             )
             logDao.insert(log)
-            plannedDao.markDone(items.map { it.id }, t, log.id)
+
+            // 通过项批量标记；未通过项先生成故障记录再逐项标记并关联
+            val passHitIds = items.filter { it.id in passIds.toSet() }.map { it.id }
+            if (passHitIds.isNotEmpty())
+                plannedDao.setResult(passHitIds, PlannedItem.RESULT_PASS, t, log.id, "")
+            failedItems.forEach { (itemId, symptom) ->
+                val item = items.firstOrNull { it.id == itemId } ?: return@forEach
+                val f = FaultRecord(
+                    id = newId(), logId = log.id, circuit = "",
+                    symptom = symptom.trim(), solution = "",
+                    occurredAt = t, resolvedAt = 0,
+                    status = FaultRecord.STATUS_PENDING, updatedAt = t
+                )
+                faultDao.insert(f)
+                plannedDao.setResult(listOf(itemId), PlannedItem.RESULT_FAIL, t, log.id, f.id)
+            }
+
             val existing = candDao.contentsOnce(inst.typeId).map { it.trim() }.toHashSet()
             content.split('\n')
                 .map { it.trim() }
@@ -364,7 +392,7 @@ class Repository(private val db: AppDatabase) {
 
     companion object {
         const val BACKUP_APP_TAG = "power-debug-log"
-        const val BACKUP_SCHEMA = 3
+        const val BACKUP_SCHEMA = 4
     }
 
     /**
@@ -372,6 +400,7 @@ class Repository(private val db: AppDatabase) {
      * 字段名即数据库列名，schemaVersion 变更时需提供迁移说明。
      * schemaVersion 2：全表UUID主键+updatedAt合并时钟；日志含创建/修改账号。
      * schemaVersion 3：新增 plannedItems（柜子实例的预选待测清单）。
+     * schemaVersion 4：plannedItems 增加三态结果 result 与关联故障 faultId。
      */
     suspend fun backupJson(): String {
         val jo = JSONObject()
@@ -444,6 +473,7 @@ class Repository(private val db: AppDatabase) {
                     .put("id", it.id).put("instanceId", it.instanceId).put("content", it.content)
                     .put("enabled", if (it.enabled) 1 else 0)
                     .put("doneAt", it.doneAt).put("logId", it.logId)
+                    .put("result", it.result).put("faultId", it.faultId)
                     .put("createdAt", it.createdAt).put("updatedAt", it.updatedAt)
             })
         )
@@ -530,6 +560,8 @@ class Repository(private val db: AppDatabase) {
                         content = getString("content"),
                         enabled = optInt("enabled", 1) != 0,
                         doneAt = optLong("doneAt"), logId = optString("logId"),
+                        result = optInt("result", PlannedItem.RESULT_UNTESTED),
+                        faultId = optString("faultId"),
                         createdAt = optLong("createdAt"), updatedAt = optLong("updatedAt")
                     )
                 }
@@ -705,6 +737,8 @@ class Repository(private val db: AppDatabase) {
                         content = getString("content"),
                         enabled = optInt("enabled", 1) != 0,
                         doneAt = optLong("doneAt"), logId = optString("logId"),
+                        result = optInt("result", PlannedItem.RESULT_UNTESTED),
+                        faultId = optString("faultId"),
                         createdAt = optLong("createdAt"), updatedAt = optLong("updatedAt")
                     )
                 }

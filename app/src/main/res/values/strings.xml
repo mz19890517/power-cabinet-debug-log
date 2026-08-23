@@ -156,15 +156,17 @@
     <string name="planned_input_hint">输入自定义测试项（如：L1照明回路送电）</string>
     <string name="sync_from_pool">从候选池补充</string>
     <string name="planned_sync_done">从候选池补充 %1$d 项</string>
-    <string name="planned_stat_fmt">共%1$d项 · 待测%2$d · 已完成%3$d · 已停用%4$d\n勾选框=启用/停用；点已完成项可撤销恢复待测</string>
+    <string name="planned_stat_fmt">共%1$d项 · 待测%2$d · 未通过%3$d · 已通过%4$d · 已停用%5$d\n勾选框=启用/停用；点已测项可撤销结果重新来过</string>
     <string name="planned_pending">□ 待测</string>
     <string name="planned_disabled">已停用</string>
-    <string name="planned_done_fmt">✓ 已完成 %1$s</string>
+    <string name="planned_pass_fmt">✓ 已通过 %1$s</string>
+    <string name="planned_fail_fmt">✗ 未通过 %1$s · 原因：%2$s</string>
+    <string name="planned_reason_in_log">见日志故障记录</string>
     <string name="planned_undo_title">撤销完成（恢复为待测）？</string>
     <string name="empty_planned">暂无预选项目。可手动添加，或点右上按钮从候选池补充。</string>
     <string name="start_test_hint">柜子：%1$s（编号 %2$s）\n勾选本次实际完成的测试项，完成后一键生成日志。</string>
     <string name="empty_pending_tests">没有待测项目。\n请先在长按菜单「预选待测」里添加或启用项目。</string>
-    <string name="check_count_fmt">已勾选 %1$d / 共 %2$d 项</string>
+    <string name="check_count_fmt">已操作 %1$d / 共 %2$d 项（✓通过%3$d · ✗未通过%4$d）</string>
     <string name="generate_log">生成日志</string>
     <string name="generate_confirm_fmt">将把已勾选的 %1$d 项合并为一条调试日志（整柜）。请确认测试人员：</string>
     <string name="log_generated">日志已生成 ✓</string>
@@ -174,4 +176,12 @@
     <string name="tester_name">测试人员</string>
     <string name="del_log_retest">删除并重测（恢复待测）</string>
     <string name="del_log_purge">删除并连项删除</string>
+    <string name="btn_pass">通过</string>
+    <string name="btn_fail">问题</string>
+    <string name="fail_symptom_hint">故障现象（必填，如：合闸后L1无输出）</string>
+    <string name="fail_symptom_required">该项记为"未通过"，需记录故障现象；整改后复测再点「通过」。</string>
+    <string name="progress_line_fmt">本柜测试进度：待测 %1$d · 未通过 %2$d · 已通过 %3$d</string>
+    <string name="progress_detail_title">本柜预选测试项明细</string>
+    <string name="log_marked_toast">已保存 ✓ 并自动标记 %1$d 项预选项目为"已通过"</string>
+    <string name="edited_marker"> ·已改</string>
 </resources>

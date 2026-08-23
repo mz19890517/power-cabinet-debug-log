@@ -6,6 +6,7 @@
 
 - **项目制管理**：以工程项目为根，一个项目包含一台或多台柜子
 - **柜子类型（模板）**：如“直流馈线柜”，每个类型维护一份**预选测试项候选池**；保存日志时测试内容自动沉淀进候选池（自动去重），支持单条删除、批量粘贴导入
+- **预选待测（v2.4 三态）**：建柜子自动生成该柜的测试清单；长按柜子「开始测试」逐项 ✓通过 / ✗未通过（强制填故障现象，自动生成故障记录）；未通过项下次继续出现在清单里供复测，复测✓才转绿；手动写日志保存时自动把内容命中的项标"通过"（忽略行尾标点的宽容匹配）。项目卡/柜子行实时显示 待测·未通过·待处理故障 三个数字
 - **柜子实例**：现场实际设备（如“1号直流馈线屏”），隶属某项目、绑定某类型；同型号柜子共用同一套候选池。字段：名称必填，设备编号 / 安装位置 / **安装人员** 选填
 - **调试日志**：
   - 项目→实例 两级定位后，自动加载该类型候选池，勾选后一键填充测试内容（可手改）
@@ -88,7 +89,7 @@ Project 1─N CabinetInstance N─1 CabinetType 1─N CandidateItem(候选池)
    ```json
    {
      "app": "power-debug-log",
-     "schemaVersion": 2,
+     "schemaVersion": 4,
      "projects":      [{ "id","name","code","remark","createdAt","updatedAt" }],
      "cabinetTypes":  [{ "id","name","remark","createdAt","updatedAt" }],
      "candidateItems":[{ "id","typeId","content","createdAt","updatedAt" }],
@@ -102,6 +103,8 @@ Project 1─N CabinetInstance N─1 CabinetType 1─N CandidateItem(候选池)
 2. **复用路径 A（Kotlin 多端）**：`data/db/Entities.kt` 与 `Repository.kt` 无 Android UI 依赖（仅依赖 Room 与 kotlinx-coroutines）。桌面端可用 JVM + Room（SQLite JDBC）、网页端可移植为 SQLDelight/Exposed，按相同语义实现 Repository。
 3. **复用路径 B（直连数据库）**：桌面工具直接打开导出的 `.db` 文件或读取 xlsx/JSON，表结构与上述模型一一对应。
 4. 扩展新功能（如照片附件）时新增表并 `schemaVersion+1`，保持旧字段不动即可双向兼容。
+   - v3：新增 `plannedItems`（柜子实例的预选待测清单）
+   - v4：plannedItems 增加 `result`（0未测/1通过/2未通过）与 `faultId`（未通过关联的故障）
 
 ## 隐私声明
 

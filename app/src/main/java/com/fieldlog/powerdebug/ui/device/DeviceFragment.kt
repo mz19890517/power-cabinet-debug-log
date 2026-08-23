@@ -225,8 +225,8 @@ private class ProjectAdapter(
         h.ib.tvSub.text = buildString {
             append(h.ib.root.context.getString(R.string.cabinets_fmt, item.cabinetCount, item.logCount))
             if (item.project.code.isNotBlank()) append(" · ${item.project.code}")
-            if (item.pendingTests > 0 || item.pendingFaults > 0)
-                append(" · 待测${item.pendingTests} · 待处理${item.pendingFaults}")
+            if (item.pendingTests > 0 || item.failedTests > 0 || item.pendingFaults > 0)
+                append(" · 待测${item.pendingTests}·未通过${item.failedTests}·待处理${item.pendingFaults}")
             if (item.project.remark.isNotBlank()) append(" · ${item.project.remark}")
         }
         h.ib.root.setOnClickListener { onClick(item) }

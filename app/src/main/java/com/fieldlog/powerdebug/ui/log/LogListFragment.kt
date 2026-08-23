@@ -292,7 +292,8 @@ class LogAdapter(
         val ctx = h.ib.root.context
         val circuitTxt = item.log.circuit.ifEmpty { ctx.getString(R.string.whole_cabinet) }
         h.ib.tvTitle.text = "${item.instanceName} · $circuitTxt"
-        h.ib.tvDate.text = DT.full(item.log.createdAt)
+        h.ib.tvDate.text = DT.full(item.log.createdAt) +
+            if (item.log.updatedAt > item.log.createdAt) ctx.getString(R.string.edited_marker) else ""
 
         if (item.pendingCount > 0) {
             h.ib.badgePending.visibility = View.VISIBLE

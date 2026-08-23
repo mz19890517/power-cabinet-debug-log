@@ -19,6 +19,7 @@ import com.fieldlog.powerdebug.data.db.CandidateItem
 import com.fieldlog.powerdebug.data.db.DebugLog
 import com.fieldlog.powerdebug.data.db.FaultRecord
 import com.fieldlog.powerdebug.data.db.LogListItem
+import com.fieldlog.powerdebug.data.db.PlannedItem
 import com.fieldlog.powerdebug.data.db.Project
 import com.fieldlog.powerdebug.databinding.ActivityLogEditBinding
 import com.fieldlog.powerdebug.databinding.DialogFaultBinding
@@ -185,6 +186,60 @@ class LogEditActivity : AppCompatActivity() {
         b.actCircuit.setAdapter(
             ArrayAdapter(this, android.R.layout.simple_list_item_1, circuits)
         )
+
+        refreshTestProgress()
+    }
+
+    /** 本柜预选测试进度常显行：待测X · 未通过Y · 已通过Z，点击看明细 */
+    private fun refreshTestProgress() {
+        if (selInstanceId.isEmpty()) {
+            b.tvTestProgress.visibility = View.GONE
+            return
+        }
+        b.tvTestProgress.visibility = View.VISIBLE
+        lifecycleScope.launch {
+            val items = App.db.plannedItemDao().allOfInstanceOnce(selInstanceId)
+            val enabled = items.filter { it.enabled }
+            val pending = enabled.count { it.result == PlannedItem.RESULT_UNTESTED }
+            val failed = enabled.count { it.result == PlannedItem.RESULT_FAIL }
+            val passed = enabled.count { it.result == PlannedItem.RESULT_PASS }
+            b.tvTestProgress.text =
+                getString(R.string.progress_line_fmt, pending, failed, passed)
+                    .let { s -> if (items.isEmpty()) "" else "$s ｜ 点击查看明细" }
+            plannedCache = items
+        }
+        b.tvTestProgress.setOnClickListener { showPlannedDetail() }
+    }
+
+    private var plannedCache: List<PlannedItem> = emptyList()
+
+    /** 三态明细弹窗：未通过项附故障原因 */
+    private fun showPlannedDetail() {
+        lifecycleScope.launch {
+            val items = App.db.plannedItemDao().allOfInstanceOnce(selInstanceId)
+            val faultIds = items.map { it.faultId }.filter { it.isNotEmpty() }
+            val reasons = if (faultIds.isNotEmpty())
+                App.db.faultRecordDao().byIdsOnce(faultIds).associate { it.id to it.symptom }
+                else emptyMap()
+            val text = buildString {
+                items.filter { it.enabled }.sortedBy { it.result }.forEach { p ->
+                    when (p.result) {
+                        PlannedItem.RESULT_PASS -> appendLine("✓ ${p.content}")
+                        PlannedItem.RESULT_FAIL -> appendLine("✗ ${p.content}")
+                        else -> appendLine("□ ${p.content}")
+                    }
+                    if (p.result == PlannedItem.RESULT_FAIL) {
+                        appendLine("   原因：${reasons[p.faultId] ?: "见日志故障记录"}")
+                    }
+                }
+                if (isEmpty()) append(getString(R.string.empty_planned))
+            }
+            AlertDialog.Builder(this@LogEditActivity)
+                .setTitle(R.string.progress_detail_title)
+                .setMessage(text)
+                .setPositiveButton(R.string.confirm, null)
+                .show()
+        }
     }
 
     private suspend fun currentTypeId(): String =
@@ -223,7 +278,12 @@ class LogEditActivity : AppCompatActivity() {
             val creator = d.log.createdBy.ifEmpty { "-" }
             val updator = d.log.updatedBy.ifEmpty { "-" }
             b.tvMeta.visibility = View.VISIBLE
-            b.tvMeta.text = "创建账号：$creator · 最近修改：$updator"
+            b.tvMeta.text = buildString {
+                append("创建 ${DT.full(d.log.createdAt)} · $creator")
+                if (d.log.updatedAt > d.log.createdAt) {
+                    append("\n修改 ${DT.full(d.log.updatedAt)} · $updator")
+                }
+            }
 
             drafts.addAll(App.repo.faultsOf(d.log.id))
             faultAdapter.notifyDataSetChanged()
@@ -376,8 +436,16 @@ class LogEditActivity : AppCompatActivity() {
         val actor = SyncStore.currentUser(this).orEmpty()
         lifecycleScope.launch {
             try {
-                App.repo.saveLog(log, drafts.toList(), actor)
-                Toast.makeText(this@LogEditActivity, R.string.saved_ok, Toast.LENGTH_SHORT).show()
+                val marked = App.repo.saveLog(log, drafts.toList(), actor)
+                if (marked > 0) {
+                    Toast.makeText(
+                        this@LogEditActivity,
+                        getString(R.string.log_marked_toast, marked),
+                        Toast.LENGTH_LONG
+                    ).show()
+                } else {
+                    Toast.makeText(this@LogEditActivity, R.string.saved_ok, Toast.LENGTH_SHORT).show()
+                }
                 // 自动同步：开关开启且已登录时静默推送并拉取他人数据，失败不打扰
                 if (SyncStore.autoUpload(this@LogEditActivity) && actor.isNotEmpty()) {
                     CoroutineScope(Dispatchers.IO).launch {
