@@ -31,6 +31,7 @@ import com.fieldlog.powerdebug.ui.log.LogEditActivity
 import com.fieldlog.powerdebug.ui.test.PlannedManageActivity
 import com.fieldlog.powerdebug.ui.test.TestChecklistActivity
 import com.fieldlog.powerdebug.util.DT
+import com.fieldlog.powerdebug.util.SyncLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -295,23 +296,30 @@ class ProjectDetailActivity : AppCompatActivity() {
                                     Toast.LENGTH_SHORT
                                 ).show()
                             } catch (e: Exception) {
-                                // 拉取失败必须可见，不能静默闪退
-                                Toast.makeText(
-                                    this@ProjectDetailActivity,
-                                    "拉取失败：${e.message}", Toast.LENGTH_LONG
-                                ).show()
+                                // 拉取失败必须可见且可追查：详情落SyncLog供「查看同步日志」回传
+                                logPullError("执行覆盖", e)
                             }
                         }
                     }
                     .setNegativeButton(R.string.cancel, null)
                     .show()
             } catch (e: Exception) {
-                Toast.makeText(
-                    this@ProjectDetailActivity,
-                    "拉取失败：${e.message}", Toast.LENGTH_LONG
-                ).show()
+                logPullError("读取清单", e)
             }
         }
+    }
+
+    /** 拉取链路异常统一上报：堆栈关键帧写入诊断日志，toast带异常类型 */
+    private fun logPullError(stage: String, e: Exception) {
+        SyncLog.append(
+            this,
+            "⚠ 跨柜拉取[$stage] ${e.javaClass.name}: ${e.message} ⏎ " +
+                e.stackTraceToString().lineSequence().take(6).joinToString(" ⏎ ")
+        )
+        Toast.makeText(
+            this, "拉取失败[${stage}]：${e.javaClass.simpleName}: ${e.message}",
+            Toast.LENGTH_LONG
+        ).show()
     }
 
     /** 来源柜适配器：项目名/柜子名双字段搜索过滤 */

@@ -23,7 +23,7 @@ import kotlinx.coroutines.launch
  * 候选池手选器（v2.9）：
  * 候选项按「使用频次」降序（该类型全部柜子预选清单中出现次数；常用项浮顶），
  * 手动勾选要加入本柜清单的条目。支持：
- *  · 长按条目后滑动手指 → 连续多选（拖过的行全部勾上）
+ *  · 长按条目进入涂选态 → 手指滑动或滚动经过的行连续勾选，抬手结束
  *  · 「常用选取」一键勾选使用≥2次的项
  *  · 全选 / 清空
  * 确认后加入本柜预选清单，已在清单中的项自动跳过并标注。
@@ -48,8 +48,8 @@ class CandidatePickerActivity : AppCompatActivity() {
     private lateinit var adapter: PickAdapter
     private lateinit var btnConfirm: Button
 
-    /** 拖动多选进行中（长按某行触发，抬手结束） */
-    private var dragging = false
+    /** 涂选进行中（长按某行触发，抬手结束）；期间列表照常可滚动 */
+    private var painting = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -69,31 +69,16 @@ class CandidatePickerActivity : AppCompatActivity() {
         }
         refreshConfirm()
 
-        // ---- 长按拖动多选：长按进入拖选态，滑过的行连续勾选，抬手结束 ----
-        // 拦截期间返回true吃掉事件流（禁滚动），MOVE在onTouchEvent里持续命中行
-        rv.addOnItemTouchListener(object : RecyclerView.SimpleOnItemTouchListener() {
-            override fun onInterceptTouchEvent(rv: RecyclerView, e: MotionEvent): Boolean {
-                when (e.actionMasked) {
-                    MotionEvent.ACTION_DOWN -> dragging = false
-                    MotionEvent.ACTION_MOVE -> if (dragging) {
-                        checkRowAt(rv, e.x, e.y)
-                        return true
-                    }
-                }
-                return dragging
+        // ---- 长按涂选多行：长按进入涂选态后，手指滑动/滚动经过的行连续勾选 ----
+        // 关键：绝不消费事件（恒返回false），RecyclerView滚动照常工作；
+        // 只在旁路观察MOVE做行命中勾选，避免旧版suppressLayout冻死列表的问题
+        rv.setOnTouchListener { _, e ->
+            when (e.actionMasked) {
+                MotionEvent.ACTION_MOVE -> if (painting) checkRowAt(rv, e.x, e.y)
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> painting = false
             }
-
-            override fun onTouchEvent(rv: RecyclerView, e: MotionEvent) {
-                when (e.actionMasked) {
-                    MotionEvent.ACTION_MOVE -> if (dragging) checkRowAt(rv, e.x, e.y)
-                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
-                        if (dragging) {
-                            dragging = false
-                            rv.suppressLayout(false)
-                        }
-                }
-            }
-        })
+            false
+        }
 
         findViewById<View>(R.id.btn_pick_all).setOnClickListener { selectAll(true) }
         findViewById<View>(R.id.btn_pick_clear).setOnClickListener { selectAll(false) }
@@ -209,11 +194,10 @@ class CandidatePickerActivity : AppCompatActivity() {
 
             h.itemView.setOnClickListener { toggle(h.bindingAdapterPosition) }
             h.cb.setOnClickListener { toggle(h.bindingAdapterPosition) }
-            // 长按任意行 → 进入拖动多选，并把当前行先勾上
+            // 长按任意行 → 进入涂选态（列表仍可滚动），并把当前行先勾上
             h.itemView.setOnLongClickListener {
                 if (item.inList) return@setOnLongClickListener false
-                dragging = true
-                (h.itemView.parent as? RecyclerView)?.suppressLayout(true)
+                painting = true
                 if (item.candId !in checkedIds) {
                     checkedIds.add(item.candId)
                     adapter.notifyItemChanged(h.bindingAdapterPosition)
