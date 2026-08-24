@@ -96,8 +96,15 @@ object WebDavSync {
             append("同步完成 ✓\n")
             append("已上传我的快照\n")
             if (parts.isEmpty()) {
-                if (totNewLogs + totUpdLogs + totNewFaults + totUpdFaults + totOtherNew == 0)
-                    append("其他人暂无新数据")
+                if (totNewLogs + totUpdLogs + totNewFaults + totUpdFaults + totOtherNew == 0) {
+                    // 区分两种"没动静"：目录里根本没有别人的快照 vs 有但内容都已在本机
+                    val others = files.count { it != myName }
+                    append(
+                        if (others == 0)
+                            "目录里没有其他测试员的快照。\n请确认所有手机配置的是同一个共享文件夹地址（坚果云需用共享文件夹，各账号独立空间互不可见）。"
+                        else "其他人暂无新数据"
+                    )
+                }
             } else append(parts.joinToString("\n"))
             if (totOtherNew > 0) append("\n其他新增条目 $totOtherNew 条")
             if (errors.isNotEmpty()) append("\n⚠ 部分文件跳过：${errors.joinToString(" ")}")
