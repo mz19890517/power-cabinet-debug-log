@@ -1109,8 +1109,6 @@ class Repository(private val db: AppDatabase) {
             appliedTombs = approxDel
         )
     }
-        )
-    }
 
     private suspend fun applyMerge(pb: ParsedBackup): MergeResult {
         val r = MergeResult()
