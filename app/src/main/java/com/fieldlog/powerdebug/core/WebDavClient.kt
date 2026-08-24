@@ -53,8 +53,14 @@ class WebDavClient(
             .url(urlFor(fileName))
             .header("Authorization", authHeader())
         if (depth != null) b.header("Depth", depth)
-        if (body != null) b.method(method, body.toRequestBody(jsonBody))
-        else b.method(method, emptyBody)
+        when {
+            // 正常带体请求（PUT上传等）
+            body != null -> b.method(method, body.toRequestBody(jsonBody))
+            // GET/HEAD 绝不能带请求体（坚果云会拒绝：method GET must not have a request body）
+            method.equals("GET", true) || method.equals("HEAD", true) -> b.method(method, null)
+            // PROPFIND等自定义动词：OkHttp要求非GET/HEAD必须有体，给零长度体
+            else -> b.method(method, emptyBody)
+        }
         return b.build()
     }
 
