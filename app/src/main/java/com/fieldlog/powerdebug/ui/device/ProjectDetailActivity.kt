@@ -280,8 +280,7 @@ class ProjectDetailActivity : AppCompatActivity() {
                     .setMessage(
                         getString(
                             R.string.pull_confirm_msg,
-                            "${src.projectName}·${src.instance.name}", srcCount,
-                            target.name, tgtCount
+                            "${src.projectName}·${src.instance.name}", srcCount, tgtCount
                         )
                     )
                     .setPositiveButton(R.string.confirm) { _, _ ->

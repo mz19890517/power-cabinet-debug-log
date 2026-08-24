@@ -35,6 +35,13 @@ class PlannedManageActivity : AppCompatActivity() {
     private var typeId = ""
     private lateinit var adapter: PlannedAdapter
 
+    /** 候选池缓存（内容→使用次数），输入联想用 */
+    private val pool = mutableListOf<Pair<String, Int>>()
+    /** 本柜现有清单内容（trim后），联想行标注"已在本柜" */
+    private val currentContents = mutableSetOf<String>()
+    private lateinit var etNewItem: EditText
+    private lateinit var boxSuggest: ViewGroup
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_planned_manage)
@@ -65,6 +72,8 @@ class PlannedManageActivity : AppCompatActivity() {
                     App.db.faultRecordDao().byIdsOnce(faultIds).associate { it.id to it.symptom }
                 else emptyMap()
                 adapter.submit(list, reasons)
+                currentContents.clear()
+                currentContents.addAll(list.map { it.content.trim() })
                 findViewById<TextView>(R.id.tv_planned_empty).visibility =
                     if (list.isEmpty()) View.VISIBLE else View.GONE
                 findViewById<RecyclerView>(R.id.rv_planned).visibility =
@@ -73,7 +82,23 @@ class PlannedManageActivity : AppCompatActivity() {
             }
         }
 
-        val etNewItem = findViewById<EditText>(R.id.et_new_item)
+        etNewItem = findViewById(R.id.et_new_item)
+        boxSuggest = findViewById(R.id.box_cand_suggest)
+
+        // 候选池联想：加载本类型候选池，输入时把"包含输入文字"的候选项列在框下，
+        // 点选回填标准描述再添加——避免手打几个字差异造成重复项
+        lifecycleScope.launch {
+            val inst = App.repo.getInstance(instanceId) ?: return@launch
+            pool.clear()
+            pool += App.repo.candidatesByUsage(inst.typeId).map { (c, u) -> c.content.trim() to u }
+            filterSuggest()
+        }
+        etNewItem.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) = filterSuggest()
+        })
+
         findViewById<View>(R.id.btn_add_item).setOnClickListener {
             val text = etNewItem.text?.toString()?.trim().orEmpty()
             if (text.isEmpty()) return@setOnClickListener
@@ -93,6 +118,50 @@ class PlannedManageActivity : AppCompatActivity() {
             startActivity(CandidatePickerActivity.intent(this, instanceId))
         }
     }
+
+    /** 输入联想：列出候选池中"包含输入文字"的条目（最多8条），点选回填标准描述 */
+    private fun filterSuggest() {
+        if (!this::etNewItem.isInitialized || !this::boxSuggest.isInitialized) return
+        val q = etNewItem.text?.toString()?.trim().orEmpty()
+        val matches = if (q.isEmpty()) emptyList() else
+            pool.filter { it.first.contains(q, ignoreCase = true) }.take(8)
+        boxSuggest.removeAllViews()
+        if (matches.isEmpty()) {
+            boxSuggest.visibility = View.GONE
+            return
+        }
+        boxSuggest.visibility = View.VISIBLE
+        // 容器里首个子View是XML里的说明文字，保留它在最上，动态行追加其后
+        val caption = TextView(this).apply {
+            text = getString(R.string.suggest_caption)
+            textSize = 11f
+            setTextColor(android.graphics.Color.GRAY)
+            setPadding(0, dp(6), 0, 0)
+        }
+        boxSuggest.addView(caption)
+        matches.forEach { (content, usage) ->
+            val inList = content in currentContents
+            val tag = if (inList) getString(R.string.suggest_in_list)
+            else getString(R.string.suggest_usage_fmt, usage)
+            val tv = TextView(this).apply {
+                text = "· $content　($tag)"
+                textSize = 13f
+                setTextColor(
+                    if (inList) android.graphics.Color.parseColor("#2E7D32")
+                    else androidx.core.content.ContextCompat.getColor(context, R.color.on_surface)
+                )
+                setPadding(dp(10), dp(7), dp(6), dp(7))
+                // 点击整行回填标准描述；已在本柜的也可回填（便于对照删除多余项）
+                setOnClickListener {
+                    etNewItem.setText(content)
+                    etNewItem.setSelection(content.length)
+                }
+            }
+            boxSuggest.addView(tv)
+        }
+    }
+
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
     private suspend fun refreshInfo(list: List<PlannedItem>) {
         val pending = list.count { it.enabled && it.result == PlannedItem.RESULT_UNTESTED }

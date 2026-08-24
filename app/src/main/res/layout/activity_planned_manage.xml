@@ -65,6 +65,17 @@
             app:tint="@color/primary" />
     </LinearLayout>
 
+    <!-- 候选池联想：输入时展示包含输入文字的候选项，点选回填避免重复添加（动态行由代码渲染） -->
+    <LinearLayout
+        android:id="@+id/box_cand_suggest"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@color/surface"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:visibility="gone" />
+
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/rv_planned"
         android:layout_width="match_parent"
