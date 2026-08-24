@@ -9,8 +9,9 @@ import kotlinx.coroutines.withContext
 
 /**
  * WebDAV同步编排（团队互通模式）：
- * 所有测试员配置同一个WebDAV目录；每台手机上传自己的快照 backup_<账号>.json，
+ * 所有手机配置同一个WebDAV目录；每台手机上传自己的快照 backup_<账号>_<本机标识>.json，
  * 同时把目录下其他人的快照全部智能合并进本机——记录自动流动，无需手动搬运。
+ * 文件名含每台设备唯一的随机标识：同一账号多台手机同时使用也不会互相覆盖。
  * 合并规则：按UUID去重、同ID冲突保留updatedAt较新者、绝不删除本地数据。
  */
 object WebDavSync {
@@ -21,21 +22,22 @@ object WebDavSync {
         return WebDavClient(cfg.url, cfg.user, cfg.pass)
     }
 
-    private fun fileNameOf(user: String) = "backup_${user}.json"
+    private fun fileNameOf(ctx: Context, user: String) =
+        "backup_${user}_${SyncStore.deviceTag(ctx)}.json"
 
-    /** 生成快照并上传到当前账号的备份文件。 */
+    /** 生成快照并上传到本机对应的备份文件。 */
     suspend fun uploadSnapshot(ctx: Context): String = withContext(Dispatchers.IO) {
         val user = SyncStore.currentUser(ctx)
             ?: throw IllegalStateException("未登录测试账号")
         val json = App.repo.backupJson()
-        val name = fileNameOf(user)
+        val name = fileNameOf(ctx, user)
         client(ctx).upload(name, json.toByteArray(Charsets.UTF_8))
         name
     }
 
     /** 下载指定账号的远端快照原文。 */
     suspend fun fetchRemote(ctx: Context, user: String): String = withContext(Dispatchers.IO) {
-        val bytes = client(ctx).download(fileNameOf(user))
+        val bytes = client(ctx).download(fileNameOf(ctx, user))
         String(bytes, Charsets.UTF_8)
     }
 
@@ -49,10 +51,12 @@ object WebDavSync {
         val cl = client(ctx)
 
         // 1) 推送自己的最新快照
-        val myName = fileNameOf(me)
+        val myName = fileNameOf(ctx, me)
         cl.upload(myName, App.repo.backupJson().toByteArray(Charsets.UTF_8))
 
-        // 2) 拉取并合并其他人的快照
+        // 2) 拉取并合并目录内其他所有快照。
+        // 只跳过自己本次上传的那份；旧版无标识文件（可能来自同账号的另一台手机）照常合并——
+        // 合并语义保证无害：同id新者胜、绝不删除本地数据。
         val files = try {
             cl.listBackups()
         } catch (_: Exception) {

@@ -16,6 +16,7 @@ object SyncStore {
     private const val K_PASS = "webdav_pass"
     private const val K_CURRENT = "current_user"
     private const val K_LAST_DEBUGGER = "last_debugger"
+    private const val K_DEVICE_TAG = "device_tag"
     private const val K_AUTO = "auto_upload"
     private const val K_LAST_AUTO = "last_auto_sync"
 
@@ -62,6 +63,20 @@ object SyncStore {
 
     fun setCurrentDebugger(ctx: Context, name: String) {
         prefs(ctx).edit().putString(K_LAST_DEBUGGER, name.trim()).apply()
+    }
+
+    /**
+     * 本机随机标识（首次使用时生成，之后固定）。
+     * 快照文件名带上它，同一账号在多台手机上各用各的文件，互不覆盖、可互相合并。
+     */
+    fun deviceTag(ctx: Context): String {
+        val p = prefs(ctx)
+        val saved = p.getString(K_DEVICE_TAG, "").orEmpty()
+        if (saved.isNotEmpty()) return saved
+        val chars = "abcdefghijklmnopqrstuvwxyz0123456789"
+        val fresh = buildString { repeat(6) { append(chars.random()) } }
+        p.edit().putString(K_DEVICE_TAG, fresh).apply()
+        return fresh
     }
 
     /** 保存日志后是否自动上传快照（默认开：连上即基本免操作） */
