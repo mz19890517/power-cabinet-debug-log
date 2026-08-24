@@ -269,30 +269,48 @@ class ProjectDetailActivity : AppCompatActivity() {
         src: com.fieldlog.powerdebug.data.db.InstanceRow
     ) {
         lifecycleScope.launch {
-            val srcCount = App.db.plannedItemDao().contentsOnce(src.instance.id).count { it.isNotBlank() }
-            val tgtCount = App.db.plannedItemDao().allOfInstanceOnce(target.id).size
-            AlertDialog.Builder(this@ProjectDetailActivity)
-                .setTitle(R.string.pull_confirm_title)
-                .setIcon(android.R.drawable.ic_dialog_alert)
-                .setMessage(
-                    getString(
-                        R.string.pull_confirm_msg,
-                        "${src.projectName}·${src.instance.name}", srcCount,
-                        target.name, tgtCount
+            try {
+                val srcCount =
+                    App.db.plannedItemDao().contentsOnce(src.instance.id).count { it.isNotBlank() }
+                val tgtCount = App.db.plannedItemDao().allOfInstanceOnce(target.id).size
+                AlertDialog.Builder(this@ProjectDetailActivity)
+                    .setTitle(R.string.pull_confirm_title)
+                    .setIcon(android.R.drawable.ic_dialog_alert)
+                    .setMessage(
+                        getString(
+                            R.string.pull_confirm_msg,
+                            "${src.projectName}·${src.instance.name}", srcCount,
+                            target.name, tgtCount
+                        )
                     )
-                )
-                .setPositiveButton(R.string.confirm) { _, _ ->
-                    lifecycleScope.launch {
-                        val n = App.repo.pullPlannedFromCabinet(target.id, src.instance.id)
-                        Toast.makeText(
-                            this@ProjectDetailActivity,
-                            getString(R.string.pull_done_fmt, n),
-                            Toast.LENGTH_SHORT
-                        ).show()
+                    .setPositiveButton(R.string.confirm) { _, _ ->
+                        lifecycleScope.launch {
+                            try {
+                                val n = App.repo.pullPlannedFromCabinet(
+                                    target.id, src.instance.id
+                                )
+                                Toast.makeText(
+                                    this@ProjectDetailActivity,
+                                    getString(R.string.pull_done_fmt, n),
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            } catch (e: Exception) {
+                                // 拉取失败必须可见，不能静默闪退
+                                Toast.makeText(
+                                    this@ProjectDetailActivity,
+                                    "拉取失败：${e.message}", Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        }
                     }
-                }
-                .setNegativeButton(R.string.cancel, null)
-                .show()
+                    .setNegativeButton(R.string.cancel, null)
+                    .show()
+            } catch (e: Exception) {
+                Toast.makeText(
+                    this@ProjectDetailActivity,
+                    "拉取失败：${e.message}", Toast.LENGTH_LONG
+                ).show()
+            }
         }
     }
 

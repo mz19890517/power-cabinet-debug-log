@@ -198,6 +198,15 @@
                     android:layout_marginTop="4dp"
                     android:text="@string/sync_now" />
 
+                <Button
+                    android:id="@+id/btn_sync_log"
+                    style="?attr/materialButtonOutlinedStyle"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:layout_marginTop="4dp"
+                    android:textSize="12sp"
+                    android:text="@string/sync_log_view" />
+
                 <TextView
                     android:id="@+id/tv_debuggers"
                     android:layout_width="match_parent"

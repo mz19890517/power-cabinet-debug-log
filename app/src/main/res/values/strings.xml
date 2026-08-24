@@ -130,6 +130,13 @@
     <string name="sync_logout">退出登录</string>
     <string name="sync_auto_upload">自动同步（保存后推送；打开应用时拉取合并他人记录）</string>
     <string name="sync_now">立即双向同步</string>
+    <string name="sync_log_view">查看同步日志</string>
+    <string name="sync_log_title">诊断日志（复制发开发者排查用）</string>
+    <string name="sync_log_empty">暂无同步记录。点一次「立即双向同步」后再来看。</string>
+    <string name="sync_log_copied">日志已复制，可粘贴发给开发者</string>
+    <string name="sync_log_clear">清空</string>
+    <string name="sync_log_cleared">已清空</string>
+    <string name="copy">复制</string>
     <string name="sync_desc">团队互通：所有测试员配置同一个WebDAV目录。每台手机上传自己的快照 backup_账号_本机标识.json，同时把其他人的快照智能合并进本机——不同测试员的记录自动汇到彼此手机上。\n合并规则：新增并入；同ID冲突保留修改时间较新者；删除操作以"墓碑"形式同步——其他手机会删掉对应记录，不会删了又长回来。\n密码栏输入超级口令可离线直接注册测试员。</string>
     <string name="login_test">测试连接</string>
     <string name="login_server">服务器地址 (WebDAV 目录URL)</string>

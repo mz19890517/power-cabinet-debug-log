@@ -26,8 +26,9 @@
 ## 数据库与备份格式
 
 - Room schema 当前 version=6（迁移链 1→2→3→4→5→6 必须保持完整，禁止 fallbackToDestructiveMigration）
-- JSON 备份 schemaVersion=6，字段名=数据库列名，是将来 PC/网页端的交换格式
+- JSON 备份 schemaVersion=6，字段名=数据库列名，是将来 PC/网页端的交换格式；v2.10 起快照经 gzip 压缩上传，读取按魔数(1f 8b)自动兼容明文旧格式
 - 新增表/字段：DB version+1 写纯SQL迁移 + 备份版本+1 + parseBackup/restoreJson/merge 三处同步 + README 记录变更说明
+- 诊断日志：util/SyncLog.kt（同步过程）+ util/CrashLog.kt（全局未捕获异常黑匣子，App.onCreate 安装），工具页「查看同步日志」可查看/复制/清空——排查现场问题的标准手段
 - 合并语义：UUID主键按 id 去重插入，同 id 冲突 updatedAt 新者胜；**删除通过墓碑传播**（v6 起 deleted_items 表：显式删除入口写墓碑，合并时先落库远端墓碑→按表经DAO删除触发级联→跳过已删id与父链已断的孤儿行，防止被删数据借旧快照复活）
 
 ## 业务模型速查

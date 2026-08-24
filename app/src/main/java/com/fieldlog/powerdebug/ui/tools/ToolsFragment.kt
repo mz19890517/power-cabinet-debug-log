@@ -1,12 +1,17 @@
 package com.fieldlog.powerdebug.ui.tools
 
 import android.app.AlertDialog
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.graphics.Typeface
 import android.net.Uri
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -21,7 +26,9 @@ import com.fieldlog.powerdebug.core.XlsxWriter
 import com.fieldlog.powerdebug.data.Repository
 import com.fieldlog.powerdebug.data.db.TesterAccount
 import com.fieldlog.powerdebug.databinding.FragmentToolsBinding
+import com.fieldlog.powerdebug.util.CrashLog
 import com.fieldlog.powerdebug.util.DT
+import com.fieldlog.powerdebug.util.SyncLog
 import com.fieldlog.powerdebug.util.SyncStore
 import com.fieldlog.powerdebug.util.WebDavSync
 import kotlinx.coroutines.Dispatchers
@@ -91,6 +98,45 @@ class ToolsFragment : Fragment() {
                 }
             }
         }
+        b.btnSyncLog.setOnClickListener { showSyncLogDialog() }
+    }
+
+    /** 诊断日志：同步过程 + 崩溃记录（黑匣子），可一键复制发开发者 */
+    private fun showSyncLogDialog() {
+        val ctx = requireContext()
+        val sync = SyncLog.read(ctx)
+        val crash = CrashLog.read(ctx)
+        val content = buildString {
+            if (crash.isNotBlank()) {
+                append("════ 崩溃记录 ════\n").append(crash)
+                    .append("\n════ 同步日志 ════\n")
+            }
+            append(sync)
+        }
+        val tv = TextView(ctx).apply {
+            text = content.ifBlank { getString(R.string.sync_log_empty) }
+            textSize = 11f
+            typeface = Typeface.MONOSPACE
+            setTextIsSelectable(true)
+            setPadding(40, 24, 24, 12)
+        }
+        val scroll = ScrollView(ctx).apply { addView(tv) }
+        Builder(ctx)
+            .setTitle(R.string.sync_log_title)
+            .setView(scroll)
+            .setNeutralButton(R.string.copy) { _, _ ->
+                if (content.isNotBlank()) {
+                    val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    cm.setPrimaryClip(ClipData.newPlainText("diag_log", content))
+                    Toast.makeText(ctx, R.string.sync_log_copied, Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton(R.string.sync_log_clear) { _, _ ->
+                SyncLog.clear(ctx); CrashLog.clear(ctx)
+                Toast.makeText(ctx, R.string.sync_log_cleared, Toast.LENGTH_SHORT).show()
+            }
+            .setPositiveButton(R.string.close, null)
+            .show()
     }
 
     override fun onResume() {
