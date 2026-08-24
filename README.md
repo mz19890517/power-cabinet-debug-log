@@ -11,6 +11,9 @@
 - **定向导出（v2.6）**：项目卡长按「导出本项目日志」、柜子长按「导出本柜日志」，Excel 双表格式与全量导出一致
 - **开始测试页（v2.6）**：待办项下方只读展示已通过项（绿色✓+完成时间）；复测点通过时，该项此前登记的未解决故障**自动转为已解决**
 - **操作习惯（v2.6）**：单击柜子直接进入开始调试（未建清单则先跳预选待测）；长按菜单改为 编辑柜子/预选待测/新建日志/导出本柜/删除
+- **常用模板与候选手选（v2.9）**：项目卡长按「加入常用模板」把项目各柜启用的待测项沉淀为类型候选池条目；「从候选池补充」改为弹出手选器——候选项按**使用频次降序**（该类型所有柜子清单中出现次数），支持长按拖动连续多选、「常用选取」（使用≥2次一键勾选）、全选、清空
+- **跨柜拉取（v2.9）**：柜子长按「从别的柜子拉取预选待测」，弹出全库柜子列表可按**项目名/柜子名/设备编号搜索**，选中后用来源柜启用清单整体覆盖本柜清单（旧项删除并同步全队）
+- **删除同步（v2.9 墓碑机制）**：所有删除入口写入删除墓碑并随快照上传，其他手机合并时自动删掉对应记录——删除不再"这边删了那边长回来"
 - **柜子实例**：现场实际设备（如“1号直流馈线屏”），隶属某项目、绑定某类型；同型号柜子共用同一套候选池。字段：名称必填，设备编号 / 安装位置 / **安装人员** 选填
 - **调试日志**：
   - 项目→实例 两级定位后，自动加载该类型候选池，勾选后一键填充测试内容（可手改）
@@ -27,9 +30,8 @@
   - **超级口令** `mz9890517`：在登录框密码栏输入即可离线直接注册本地测试员（免服务器）
   - **团队互通零操作**：所有手机配置同一个WebDAV目录，每台手机上传自己的快照 `backup_<账号>_<本机标识>.json`（v2.8 起带设备标识：**同一坚果云账号在多台手机上使用也不会互相覆盖**，旧格式 `backup_<账号>.json` 仍会被读取合并），同时把其他人的快照全部智能合并进本机——记录自动汇到每台手机上
   - 自动时机：保存日志后推送 + 打开应用时双向同步（60秒节流）；另有手动「立即双向同步」按钮
-  - 合并规则：按 UUID 主键去重、同 ID 冲突保留 `updatedAt` 较新者、绝不删除本机数据
+  - 合并规则：按 UUID 主键去重、同 ID 冲突保留 `updatedAt` 较新者；**删除通过墓碑传播**（v2.9 起随快照携带 `deletedItems`，合并端先应用他人删除，再跳过已删记录与父链已断的孤儿行，防止被删数据借旧快照复活）
   - 支持 http 明文（内网 NAS 场景）与中文路径
-  - 局限：删除操作不参与同步（远端快照里没有的记录不会从本机删除）
 
 ## 签名说明
 
@@ -88,7 +90,7 @@ Project 1─N CabinetInstance N─1 CabinetType 1─N CandidateItem(候选池)
                         └─1─N DebugLog 1─N FaultRecord
 ```
 
-- 删除均为级联删除且删除前有数量警告弹窗
+- 删除均为级联删除且删除前有数量警告弹窗；显式删除入口同时写入 `deleted_items` 墓碑（DB v6），随同步传播到全队
 - 候选池 `(typeId, content)` 唯一索引兜底去重
 
 ## 后期电脑端 / 网页端接入指南（预留设计）
@@ -97,7 +99,7 @@ Project 1─N CabinetInstance N─1 CabinetType 1─N CandidateItem(候选池)
    ```json
    {
      "app": "power-debug-log",
-     "schemaVersion": 5,
+     "schemaVersion": 6,
      "projects":      [{ "id","name","code","remark","createdAt","updatedAt" }],
      "cabinetTypes":  [{ "id","name","remark","createdAt","updatedAt" }],
      "candidateItems":[{ "id","typeId","content","createdAt","updatedAt" }],
@@ -105,17 +107,19 @@ Project 1─N CabinetInstance N─1 CabinetType 1─N CandidateItem(候选池)
      "logs":          [{ "id","instanceId","circuit","testContent","tester","remark","createdBy","updatedBy","createdAt","updatedAt" }],
      "faults":        [{ "id","logId","circuit","symptom","solution","occurredAt","resolvedAt","status","updatedAt" }],
      "plannedItems":  [{ "id","instanceId","content","enabled","doneAt","logId","result","faultId","createdAt","updatedAt" }],
-     "debuggers":     [{ "id","name","createdAt","updatedAt" }]
-   }
-   ```
-   - v2 起所有 `id` 为客户端生成的 UUID 字符串（多设备离线新增不撞主键）；`updatedAt` 为合并时钟。
-   - 应用仍可导入 `schemaVersion: 1` 的旧备份（自动生成 UUID 并重映射引用）。
+     "debuggers":     [{ "id","name","createdAt","updatedAt" }],
+     "deletedItems":  [{ "id","tbl","itemId","deletedAt" }]
+    }
+    ```
+    - v2 起所有 `id` 为客户端生成的 UUID 字符串（多设备离线新增不撞主键）；`updatedAt` 为合并时钟。
+    - 应用仍可导入 `schemaVersion: 1` 的旧备份（自动生成 UUID 并重映射引用）。
 2. **复用路径 A（Kotlin 多端）**：`data/db/Entities.kt` 与 `Repository.kt` 无 Android UI 依赖（仅依赖 Room 与 kotlinx-coroutines）。桌面端可用 JVM + Room（SQLite JDBC）、网页端可移植为 SQLDelight/Exposed，按相同语义实现 Repository。
 3. **复用路径 B（直连数据库）**：桌面工具直接打开导出的 `.db` 文件或读取 xlsx/JSON，表结构与上述模型一一对应。
 4. 扩展新功能（如照片附件）时新增表并 `schemaVersion+1`，保持旧字段不动即可双向兼容。
    - v3：新增 `plannedItems`（柜子实例的预选待测清单）
    - v4：plannedItems 增加 `result`（0未测/1通过/2未通过）与 `faultId`（未通过关联的故障）
    - v5：新增 `debuggers`（调试员名单；name唯一；合并时同id新者胜、按name去重、改名撞名跳过）
+   - v6：新增 `deletedItems` 删除墓碑（tbl=被删记录所在表名, itemId=原UUID）；合并端先落库墓碑→按表应用删除（触发与本机一致的级联）→跳过已删id与孤儿行
 
 ## 隐私声明
 

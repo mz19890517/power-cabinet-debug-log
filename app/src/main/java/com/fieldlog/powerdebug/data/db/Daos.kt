@@ -49,6 +49,9 @@ interface ProjectDao {
     @Delete
     suspend fun delete(p: Project)
 
+    @Delete
+    suspend fun deleteAll(list: List<Project>)
+
     @Query("DELETE FROM projects")
     suspend fun wipe()
 
@@ -90,6 +93,9 @@ interface CabinetTypeDao {
     @Delete
     suspend fun delete(t: CabinetType)
 
+    @Delete
+    suspend fun deleteAll(list: List<CabinetType>)
+
     @Query("DELETE FROM cabinet_types")
     suspend fun wipe()
 
@@ -120,8 +126,19 @@ interface CandidateItemDao {
     @Delete
     suspend fun delete(item: CandidateItem)
 
+    @Delete
+    suspend fun deleteAll(items: List<CandidateItem>)
+
     @Query("DELETE FROM candidate_items")
     suspend fun wipe()
+
+    /** 候选池使用频次：该类型全部柜子的预选清单中各内容出现次数 */
+    @Query(
+        """SELECT pi.content AS content, COUNT(*) AS cnt
+        FROM planned_items pi INNER JOIN instances i ON pi.instanceId = i.id
+        WHERE i.typeId = :typeId GROUP BY pi.content"""
+    )
+    suspend fun usageOfType(typeId: String): List<CandUsage>
 }
 
 @Dao
@@ -159,6 +176,14 @@ interface InstanceDao {
     @Query("SELECT * FROM instances ORDER BY name")
     suspend fun allOnce(): List<CabinetInstance>
 
+    /** 全部柜子带项目名（跨柜拉取来源选择用） */
+    @Query(
+        """SELECT i.*, p.name AS projectName FROM instances i
+        INNER JOIN projects p ON i.projectId = p.id
+        ORDER BY p.name COLLATE NOCASE, i.name"""
+    )
+    suspend fun allWithProject(): List<InstanceRow>
+
     @Query("SELECT * FROM instances WHERE id = :id")
     suspend fun getByIdOnce(id: String): CabinetInstance?
 
@@ -176,6 +201,9 @@ interface InstanceDao {
 
     @Delete
     suspend fun delete(i: CabinetInstance)
+
+    @Delete
+    suspend fun deleteAll(list: List<CabinetInstance>)
 
     @Query("DELETE FROM instances")
     suspend fun wipe()
@@ -277,6 +305,9 @@ interface DebugLogDao {
     @Delete
     suspend fun delete(l: DebugLog)
 
+    @Delete
+    suspend fun deleteAll(list: List<DebugLog>)
+
     @Query("DELETE FROM debug_logs")
     suspend fun wipe()
 
@@ -313,6 +344,12 @@ interface FaultRecordDao {
 
     @Update
     suspend fun updateAll(list: List<FaultRecord>)
+
+    @Delete
+    suspend fun delete(f: FaultRecord)
+
+    @Delete
+    suspend fun deleteAll(list: List<FaultRecord>)
 
     @Query("DELETE FROM fault_records WHERE logId = :logId")
     suspend fun deleteForLog(logId: String)
@@ -392,6 +429,13 @@ interface PlannedItemDao {
     @Query("DELETE FROM planned_items WHERE logId = :logId")
     suspend fun deleteForLog(logId: String)
 
+    /** 跨柜拉取覆盖：清空本柜全部预选（调用方负责先记墓碑） */
+    @Query("DELETE FROM planned_items WHERE instanceId = :instanceId")
+    suspend fun deleteForInstance(instanceId: String)
+
+    @Delete
+    suspend fun deleteAll(list: List<PlannedItem>)
+
     @Query("DELETE FROM planned_items")
     suspend fun wipe()
 }
@@ -435,6 +479,26 @@ interface DebuggerDao {
     @Delete
     suspend fun delete(d: Debugger)
 
+    @Delete
+    suspend fun deleteAll(list: List<Debugger>)
+
     @Query("DELETE FROM debuggers")
+    suspend fun wipe()
+}
+
+/** 删除墓碑表：只增不改；合并时先落库再按表应用删除（经DAO删除以触发一致的级联） */
+@Dao
+interface DeletedItemDao {
+    @Query("SELECT * FROM deleted_items ORDER BY deletedAt")
+    suspend fun allOnce(): List<DeletedItem>
+
+    /** IGNORE：同(表,记录id)重复墓碑静默跳过，保留首条 */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insert(item: DeletedItem)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertAll(items: List<DeletedItem>)
+
+    @Query("DELETE FROM deleted_items")
     suspend fun wipe()
 }

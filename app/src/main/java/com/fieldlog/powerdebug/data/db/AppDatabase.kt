@@ -17,9 +17,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         FaultRecord::class,
         PlannedItem::class,
         TesterAccount::class,
-        Debugger::class
+        Debugger::class,
+        DeletedItem::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -32,6 +33,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun plannedItemDao(): PlannedItemDao
     abstract fun testerAccountDao(): TesterAccountDao
     abstract fun debuggerDao(): DebuggerDao
+    abstract fun deletedItemDao(): DeletedItemDao
 
     companion object {
         const val DB_NAME = "power_debug.db"
@@ -226,9 +228,26 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** v5→v6：新增删除墓碑表 deleted_items（删除操作随同步传播，防"删了又长回来"） */
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `deleted_items` (" +
+                        "`id` TEXT NOT NULL PRIMARY KEY, " +
+                        "`tbl` TEXT NOT NULL, " +
+                        "`itemId` TEXT NOT NULL, " +
+                        "`deletedAt` INTEGER NOT NULL)"
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_deleted_items_tbl_itemId` " +
+                        "ON `deleted_items` (`tbl`, `itemId`)"
+                )
+            }
+        }
+
         fun build(context: Context): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, DB_NAME)
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                 .build()
     }
 }

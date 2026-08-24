@@ -96,17 +96,36 @@ class DeviceFragment : Fragment() {
             .setItems(
                 arrayOf(
                     getString(R.string.edit_project),
+                    getString(R.string.menu_add_template),
                     getString(R.string.menu_export_project),
                     getString(R.string.delete)
                 )
             ) { _, which ->
                 when (which) {
                     0 -> editProjectDialog(item.project)
-                    1 -> requestExportProject(item)
-                    2 -> confirmDeleteProject(item)
+                    1 -> saveAsTemplate(item)
+                    2 -> requestExportProject(item)
+                    3 -> confirmDeleteProject(item)
                 }
             }
             .show()
+    }
+
+    /**
+     * 「加入常用模板」：把本项目各柜子当前启用的预选待测项沉淀为
+     * 各自类型的候选池条目（同名自动跳过），供以后同类柜子快速勾选；
+     * 候选池按使用频次排序，用得越多排得越靠前。
+     */
+    private fun saveAsTemplate(item: ProjectListItem) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            val added = App.repo.saveProjectAsTemplate(item.project.id)
+            Toast.makeText(
+                requireContext(),
+                if (added == 0) R.string.template_none
+                else getString(R.string.template_done_fmt, added, item.project.name),
+                Toast.LENGTH_LONG
+            ).show()
+        }
     }
 
     // ---------- 项目定向导出 ----------

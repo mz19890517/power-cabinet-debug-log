@@ -202,6 +202,35 @@ data class TesterAccount(
 }
 
 /**
+ * 删除墓碑（v6新增）：记录「某表的某行已在何时被删除」，随备份/WebDAV同步到全队，
+ * 使删除操作也能跨设备传播——否则这边删了、那边一合并又长回来。
+ * 只记显式删除入口；级联删除靠外键在各设备本机一致触发，不逐条记墓碑。
+ */
+@Entity(
+    tableName = "deleted_items",
+    indices = [Index(value = ["tbl", "itemId"], unique = true)]
+)
+data class DeletedItem(
+    @PrimaryKey val id: String = "",
+    /** 被删除记录所在表名（TBL_* 常量） */
+    val tbl: String,
+    /** 被删除记录的原UUID */
+    val itemId: String,
+    val deletedAt: Long = System.currentTimeMillis()
+) {
+    companion object {
+        const val TBL_PROJECTS = "projects"
+        const val TBL_TYPES = "cabinet_types"
+        const val TBL_CANDS = "candidate_items"
+        const val TBL_INSTANCES = "instances"
+        const val TBL_LOGS = "debug_logs"
+        const val TBL_FAULTS = "fault_records"
+        const val TBL_PLANNED = "planned_items"
+        const val TBL_DEBUGGERS = "debuggers"
+    }
+}
+
+/**
  * 调试员名单：与登录账号无关的现场调试人员名册，由超级口令统一维护（增/改/删均需验证）。
  * 日志「测试人员」从名单中选取，默认带出最近一次使用的姓名；随备份/WebDAV同步到全队。
  */
@@ -262,4 +291,10 @@ data class FaultExportRow(
     val projectName: String,
     val instanceName: String,
     val deviceCode: String
+)
+
+/** 候选池使用频次：某条待测内容在该类型全部柜子的预选清单中出现的次数（常用排序依据） */
+data class CandUsage(
+    val content: String,
+    val cnt: Int
 )

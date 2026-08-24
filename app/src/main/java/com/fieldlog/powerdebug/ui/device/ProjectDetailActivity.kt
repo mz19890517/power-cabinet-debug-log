@@ -204,6 +204,7 @@ class ProjectDetailActivity : AppCompatActivity() {
                     getString(R.string.menu_manage_planned),
                     getString(R.string.menu_log_new_here),
                     getString(R.string.menu_export_instance),
+                    getString(R.string.menu_pull_planned),
                     getString(R.string.delete)
                 )
             ) { _, which ->
@@ -216,10 +217,124 @@ class ProjectDetailActivity : AppCompatActivity() {
                             .putExtra(LogEditActivity.KEY_PROJECT_ID, projectId)
                     )
                     3 -> requestExportInstance(inst)
-                    4 -> confirmDeleteInstance(inst)
+                    4 -> showPullSourceDialog(inst)
+                    5 -> confirmDeleteInstance(inst)
                 }
             }
             .show()
+    }
+
+    // ---------- 跨柜拉取预选待测 ----------
+
+    /**
+     * 「从别的柜子拉取」：弹出全库柜子列表（可按项目名/柜子名搜索过滤），
+     * 选中来源柜后，用其启用的预选清单整体覆盖本柜清单。
+     */
+    private fun showPullSourceDialog(target: com.fieldlog.powerdebug.data.db.CabinetInstance) {
+        lifecycleScope.launch {
+            val sources = App.repo.allInstancesWithProject().filter { it.instance.id != target.id }
+            if (sources.isEmpty()) {
+                Toast.makeText(this@ProjectDetailActivity, R.string.pull_no_source, Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val dlgView = layoutInflater.inflate(R.layout.dialog_pull_source, null)
+            val etSearch = dlgView.findViewById<EditText>(R.id.et_search)
+            val rv = dlgView.findViewById<RecyclerView>(R.id.rv_sources)
+            val tvEmpty = dlgView.findViewById<TextView>(R.id.tv_pull_empty)
+
+            val srcAdapter = SourceAdapter(sources) { src ->
+                confirmPull(target, src)
+            }
+            rv.layoutManager = LinearLayoutManager(this@ProjectDetailActivity)
+            rv.adapter = srcAdapter
+
+            AlertDialog.Builder(this@ProjectDetailActivity)
+                .setTitle(getString(R.string.pull_title_fmt, target.name))
+                .setView(dlgView)
+                .setNegativeButton(R.string.cancel, null)
+                .show()
+
+            etSearch.addTextChangedListener(object : android.text.TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun afterTextChanged(s: android.text.Editable?) {
+                    srcAdapter.filter(s?.toString()?.trim().orEmpty())
+                }
+            })
+        }
+    }
+
+    private fun confirmPull(
+        target: com.fieldlog.powerdebug.data.db.CabinetInstance,
+        src: com.fieldlog.powerdebug.data.db.InstanceRow
+    ) {
+        lifecycleScope.launch {
+            val srcCount = App.db.plannedItemDao().contentsOnce(src.instance.id).count { it.isNotBlank() }
+            val tgtCount = App.db.plannedItemDao().allOfInstanceOnce(target.id).size
+            AlertDialog.Builder(this@ProjectDetailActivity)
+                .setTitle(R.string.pull_confirm_title)
+                .setIcon(android.R.drawable.ic_dialog_alert)
+                .setMessage(
+                    getString(
+                        R.string.pull_confirm_msg,
+                        "${src.projectName}·${src.instance.name}", srcCount,
+                        target.name, tgtCount
+                    )
+                )
+                .setPositiveButton(R.string.confirm) { _, _ ->
+                    lifecycleScope.launch {
+                        val n = App.repo.pullPlannedFromCabinet(target.id, src.instance.id)
+                        Toast.makeText(
+                            this@ProjectDetailActivity,
+                            getString(R.string.pull_done_fmt, n),
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+                .setNegativeButton(R.string.cancel, null)
+                .show()
+        }
+    }
+
+    /** 来源柜适配器：项目名/柜子名双字段搜索过滤 */
+    private inner class SourceAdapter(
+        private val all: List<com.fieldlog.powerdebug.data.db.InstanceRow>,
+        private val onClick: (com.fieldlog.powerdebug.data.db.InstanceRow) -> Unit
+    ) : RecyclerView.Adapter<SourceAdapter.SVH>() {
+
+        private val shown = mutableListOf<com.fieldlog.powerdebug.data.db.InstanceRow>()
+
+        init { filter("") }
+
+        fun filter(q: String) {
+            shown.clear()
+            val key = q.trim()
+            shown += all.filter {
+                key.isEmpty() ||
+                    it.projectName.contains(key, ignoreCase = true) ||
+                    it.instance.name.contains(key, ignoreCase = true) ||
+                    it.instance.deviceCode.contains(key, ignoreCase = true)
+            }
+            notifyDataSetChanged()
+        }
+
+        inner class SVH(val ib: ItemSimpleCardBinding) : RecyclerView.ViewHolder(ib.root)
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) =
+            SVH(ItemSimpleCardBinding.inflate(layoutInflater, parent, false))
+
+        override fun getItemCount() = shown.size
+
+        override fun onBindViewHolder(h: SVH, pos: Int) {
+            val row = shown[pos]
+            h.ib.tvName.text = row.instance.name
+            h.ib.tvSub.text = buildString {
+                append(row.projectName)
+                typeNames[row.instance.typeId]?.let { append(" · ").append(it) }
+                if (row.instance.deviceCode.isNotBlank()) append(" · 编号:").append(row.instance.deviceCode)
+            }
+            h.ib.root.setOnClickListener { onClick(row) }
+        }
     }
 
     private fun requestExportInstance(inst: com.fieldlog.powerdebug.data.db.CabinetInstance) {

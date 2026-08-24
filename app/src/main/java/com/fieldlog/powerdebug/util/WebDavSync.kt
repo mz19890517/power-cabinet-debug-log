@@ -12,7 +12,8 @@ import kotlinx.coroutines.withContext
  * 所有手机配置同一个WebDAV目录；每台手机上传自己的快照 backup_<账号>_<本机标识>.json，
  * 同时把目录下其他人的快照全部智能合并进本机——记录自动流动，无需手动搬运。
  * 文件名含每台设备唯一的随机标识：同一账号多台手机同时使用也不会互相覆盖。
- * 合并规则：按UUID去重、同ID冲突保留updatedAt较新者、绝不删除本地数据。
+ * 合并规则：按UUID去重、同ID冲突保留updatedAt较新者；删除通过墓碑(deletedItems)传播，
+ * 合并时先应用他人删除、再跳过已删记录，各设备最终状态一致。
  */
 object WebDavSync {
 
@@ -66,6 +67,7 @@ object WebDavSync {
         var totNewLogs = 0; var totUpdLogs = 0
         var totNewFaults = 0; var totUpdFaults = 0
         var totOtherNew = 0
+        var totTombs = 0
         val parts = mutableListOf<String>()
         val errors = mutableListOf<String>()
 
@@ -78,19 +80,21 @@ object WebDavSync {
                     r.newProjects + r.updProjects + r.newTypes + r.updTypes +
                     r.newInstances + r.updInstances + r.newCands +
                     r.newPlanned + r.updPlanned +
-                    r.newDebuggers + r.updDebuggers > 0
+                    r.newDebuggers + r.updDebuggers + r.appliedTombs > 0
                 ) {
                     val who = f.removePrefix("backup_").removeSuffix(".json")
                     parts.add(
                         "$who：日志+${r.newLogs}/改${r.updLogs} 故障+${r.newFaults}" +
                             (if (r.newPlanned + r.updPlanned > 0) " 待测+${r.newPlanned}/改${r.updPlanned}" else "") +
-                            (if (r.newDebuggers + r.updDebuggers > 0) " 调试员+${r.newDebuggers}/改${r.updDebuggers}" else "")
+                            (if (r.newDebuggers + r.updDebuggers > 0) " 调试员+${r.newDebuggers}/改${r.updDebuggers}" else "") +
+                            (if (r.appliedTombs > 0) " 同步删除${r.appliedTombs}条" else "")
                     )
                 }
                 totNewLogs += r.newLogs; totUpdLogs += r.updLogs
                 totNewFaults += r.newFaults; totUpdFaults += r.updFaults
                 totOtherNew += r.newProjects + r.newTypes + r.newInstances + r.newCands +
                     r.newPlanned + r.newDebuggers
+                totTombs += r.appliedTombs
             } catch (e: Exception) {
                 errors.add("${f.removePrefix("backup_").removeSuffix(".json")}(${e.message})")
             }
@@ -100,7 +104,7 @@ object WebDavSync {
             append("同步完成 ✓\n")
             append("已上传我的快照\n")
             if (parts.isEmpty()) {
-                if (totNewLogs + totUpdLogs + totNewFaults + totUpdFaults + totOtherNew == 0) {
+                if (totNewLogs + totUpdLogs + totNewFaults + totUpdFaults + totOtherNew + totTombs == 0) {
                     // 区分两种"没动静"：目录里根本没有别人的快照 vs 有但内容都已在本机
                     val others = files.count { it != myName }
                     append(
@@ -111,6 +115,7 @@ object WebDavSync {
                 }
             } else append(parts.joinToString("\n"))
             if (totOtherNew > 0) append("\n其他新增条目 $totOtherNew 条")
+            if (totTombs > 0) append("\n已按他人删除操作清理本机 $totTombs 条")
             if (errors.isNotEmpty()) append("\n⚠ 部分文件跳过：${errors.joinToString(" ")}")
         }
     }

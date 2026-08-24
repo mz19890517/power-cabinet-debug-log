@@ -7,8 +7,10 @@ import com.fieldlog.powerdebug.data.db.CabinetType
 import com.fieldlog.powerdebug.data.db.CandidateItem
 import com.fieldlog.powerdebug.data.db.DebugLog
 import com.fieldlog.powerdebug.data.db.Debugger
+import com.fieldlog.powerdebug.data.db.DeletedItem
 import com.fieldlog.powerdebug.data.db.FaultExportRow
 import com.fieldlog.powerdebug.data.db.FaultRecord
+import com.fieldlog.powerdebug.data.db.InstanceRow
 import com.fieldlog.powerdebug.data.db.InstanceStatusRow
 import com.fieldlog.powerdebug.data.db.LogListItem
 import com.fieldlog.powerdebug.data.db.PlannedItem
@@ -30,7 +32,7 @@ data class Stats(
     val pendingFaults: Int
 )
 
-/** 智能合并结果（各表 新增/更新 条数） */
+/** 智能合并结果（各表 新增/更新 条数；appliedTombs=本机因墓碑实际删除的行数） */
 data class MergeResult(
     var newProjects: Int = 0, var updProjects: Int = 0,
     var newTypes: Int = 0, var updTypes: Int = 0,
@@ -39,7 +41,8 @@ data class MergeResult(
     var newLogs: Int = 0, var updLogs: Int = 0,
     var newFaults: Int = 0, var updFaults: Int = 0,
     var newPlanned: Int = 0, var updPlanned: Int = 0,
-    var newDebuggers: Int = 0, var updDebuggers: Int = 0
+    var newDebuggers: Int = 0, var updDebuggers: Int = 0,
+    var appliedTombs: Int = 0
 )
 
 /** 删除日志时，对其完成的预选待测项的处置方式（用户弹窗二选一） */
@@ -60,6 +63,7 @@ private class ParsedBackup {
     val faults = mutableListOf<FaultRecord>()
     val planned = mutableListOf<PlannedItem>()
     val debuggers = mutableListOf<Debugger>()
+    val tombs = mutableListOf<DeletedItem>()
 }
 
 /**
@@ -77,9 +81,15 @@ class Repository(private val db: AppDatabase) {
     private val faultDao = db.faultRecordDao()
     private val plannedDao = db.plannedItemDao()
     private val debuggerDao = db.debuggerDao()
+    private val tombDao = db.deletedItemDao()
 
     private fun newId() = UUID.randomUUID().toString()
     private fun now() = System.currentTimeMillis()
+
+    /** 记删除墓碑（须在业务事务内调用）：该表该行已删除，随同步传播到全队 */
+    private suspend fun markDeleted(tbl: String, itemId: String, t: Long = now()) {
+        if (itemId.isNotBlank()) tombDao.insert(DeletedItem(id = newId(), tbl = tbl, itemId = itemId, deletedAt = t))
+    }
 
     // ---------- 观察 ----------
 
@@ -108,11 +118,14 @@ class Repository(private val db: AppDatabase) {
         return row.id
     }
 
-    /** 返回受影响柜子数（用于确认弹窗），-1 表示项目不存在 */
+    /** 返回受影响柜子数（用于确认弹窗），-1 表示项目不存在。删除记墓碑随同步传播 */
     suspend fun deleteProject(id: String): Int {
         val p = projectDao.getByIdOnce(id) ?: return -1
         val cabinets = instanceDao.byProjectOnce(id).size
-        projectDao.delete(p)
+        db.withTransaction {
+            markDeleted(DeletedItem.TBL_PROJECTS, p.id)
+            projectDao.delete(p)
+        }
         return cabinets
     }
 
@@ -129,11 +142,14 @@ class Repository(private val db: AppDatabase) {
         return row.id
     }
 
-    /** 返回使用该类型的实例数（用于确认弹窗），-1 表示类型不存在 */
+    /** 返回使用该类型的实例数（用于确认弹窗），-1 表示类型不存在。删除记墓碑随同步传播 */
     suspend fun deleteType(id: String): Int {
         val t = typeDao.getByIdOnce(id) ?: return -1
         val usage = instanceDao.byTypeWithProject(id).size
-        typeDao.delete(t)
+        db.withTransaction {
+            markDeleted(DeletedItem.TBL_TYPES, t.id)
+            typeDao.delete(t)
+        }
         return usage
     }
 
@@ -154,7 +170,13 @@ class Repository(private val db: AppDatabase) {
         return added
     }
 
-    suspend fun deleteCandidate(item: CandidateItem) = candDao.delete(item)
+    /** 删除候选池条目，记墓碑随同步传播 */
+    suspend fun deleteCandidate(item: CandidateItem) {
+        db.withTransaction {
+            markDeleted(DeletedItem.TBL_CANDS, item.id)
+            candDao.delete(item)
+        }
+    }
 
     suspend fun instanceUsageOfType(typeId: String) = instanceDao.byTypeWithProject(typeId)
 
@@ -191,11 +213,14 @@ class Repository(private val db: AppDatabase) {
         return fresh.size
     }
 
-    /** 返回该柜子的日志条数（用于确认弹窗），-1 表示不存在 */
+    /** 返回该柜子的日志条数（用于确认弹窗），-1 表示不存在。删除记墓碑随同步传播 */
     suspend fun deleteInstance(id: String): Int {
         val inst = instanceDao.getByIdOnce(id) ?: return -1
         val logs = logDao.countLogsOf(inst.id)
-        instanceDao.delete(inst)
+        db.withTransaction {
+            markDeleted(DeletedItem.TBL_INSTANCES, inst.id)
+            instanceDao.delete(inst)
+        }
         return logs
     }
 
@@ -275,14 +300,19 @@ class Repository(private val db: AppDatabase) {
     /**
      * 删除日志。若该日志由「开始测试」生成或曾匹配完成预选项，
      * 由调用方先弹窗让用户选择：恢复为待测(重测) 或 连预选项一起删除(误添加)。
+     * 记墓碑随同步传播；连项删除时每个被删的预选项也各自记墓碑。
      */
     suspend fun deleteLog(id: String, mode: LogDeleteMode) {
         val l = logDao.getByIdOnce(id) ?: return
         db.withTransaction {
             when (mode) {
                 LogDeleteMode.RESTORE_PLANNED -> plannedDao.resetForLog(id, now())
-                LogDeleteMode.PURGE_PLANNED -> plannedDao.deleteForLog(id)
+                LogDeleteMode.PURGE_PLANNED -> {
+                    plannedDao.forLogOnce(id).forEach { markDeleted(DeletedItem.TBL_PLANNED, it.id) }
+                    plannedDao.deleteForLog(id)
+                }
             }
+            markDeleted(DeletedItem.TBL_LOGS, l.id)
             logDao.delete(l)
         }
     }
@@ -305,11 +335,87 @@ class Repository(private val db: AppDatabase) {
     suspend fun syncPlannedFromPool(instanceId: String, typeId: String): Int =
         seedPlannedFromPool(instanceId, typeId)
 
+    /**
+     * 「加入常用模板」：把项目下所有柜子当前启用的预选待测项，
+     * 沉淀为各自柜子类型的候选池条目（已有同名条目的自动跳过）。
+     * 之后同类柜子即可在候选选择器里快速勾选；使用频次越高的项排序越靠前。
+     * @return 新增候选条数
+     */
+    suspend fun saveProjectAsTemplate(projectId: String): Int {
+        val insts = instanceDao.byProjectOnce(projectId)
+        var added = 0
+        db.withTransaction {
+            insts.forEach { inst ->
+                val contents = plannedDao.allOfInstanceOnce(inst.id)
+                    .filter { it.enabled }
+                    .map { it.content.trim() }
+                    .filter { it.isNotEmpty() }
+                    .distinct()
+                if (contents.isEmpty()) return@forEach
+                val existing = candDao.contentsOnce(inst.typeId).map { it.trim() }.toHashSet()
+                contents.forEach { c ->
+                    if (existing.add(c)) {
+                        candDao.insert(CandidateItem(id = newId(), typeId = inst.typeId, content = c))
+                        added++
+                    }
+                }
+            }
+        }
+        return added
+    }
+
+    /**
+     * 候选池按「使用频次」降序排列（频次=该类型全部柜子预选清单中出现次数；
+     * 未用过的按创建时间排后）。返回 (候选, 频次) 列表，供候选选择器展示。
+     */
+    suspend fun candidatesByUsage(typeId: String): List<Pair<CandidateItem, Int>> {
+        val usage = candDao.usageOfType(typeId).associate { it.content to it.cnt }
+        return candDao.byTypeOnce(typeId)
+            .sortedWith(
+                compareByDescending<CandidateItem> { usage[it.content.trim()] ?: 0 }
+                    .thenBy { it.createdAt }
+            )
+            .map { it to (usage[it.content.trim()] ?: 0) }
+    }
+
+    /** 全部柜子带项目名（跨柜拉取来源列表） */
+    suspend fun allInstancesWithProject(): List<InstanceRow> = instanceDao.allWithProject()
+
+    /**
+     * 跨柜拉取预选待测：用来源柜的启用清单【整体覆盖】本柜清单。
+     * 本柜原有条目（含停用的）全部删除并记墓碑随同步传播；
+     * 来源项复制为新记录、重置为未测状态。
+     * @return 覆盖后的清单条数
+     */
+    suspend fun pullPlannedFromCabinet(targetInstanceId: String, sourceInstanceId: String): Int {
+        val src = plannedDao.allOfInstanceOnce(sourceInstanceId).filter { it.enabled }
+        val t = now()
+        var n = 0
+        db.withTransaction {
+            val olds = plannedDao.allOfInstanceOnce(targetInstanceId)
+            olds.forEach { markDeleted(DeletedItem.TBL_PLANNED, it.id, t) }
+            plannedDao.deleteForInstance(targetInstanceId)
+            val fresh = src.map {
+                PlannedItem(id = newId(), instanceId = targetInstanceId, content = it.content.trim(),
+                    createdAt = t, updatedAt = t)
+            }
+            plannedDao.insertAll(fresh)
+            n = fresh.size
+        }
+        return n
+    }
+
     suspend fun updatePlanned(item: PlannedItem) {
         plannedDao.update(item.copy(updatedAt = now()))
     }
 
-    suspend fun deletePlanned(item: PlannedItem) = plannedDao.delete(item)
+    /** 删除单条预选待测项，记墓碑随同步传播 */
+    suspend fun deletePlanned(item: PlannedItem) {
+        db.withTransaction {
+            markDeleted(DeletedItem.TBL_PLANNED, item.id)
+            plannedDao.delete(item)
+        }
+    }
 
     /**
      * 「开始测试」保存：✓通过项与✗未通过项合并为同一条日志（每行一项，整柜回路留空），
@@ -418,9 +524,14 @@ class Repository(private val db: AppDatabase) {
         return true
     }
 
-    /** 删除调试员，历史日志保留原姓名 */
+    /** 删除调试员（历史日志保留原姓名），记墓碑随同步传播 */
     suspend fun deleteDebugger(id: String) {
-        debuggerDao.byIdOnce(id)?.let { debuggerDao.delete(it) }
+        debuggerDao.byIdOnce(id)?.let {
+            db.withTransaction {
+                markDeleted(DeletedItem.TBL_DEBUGGERS, it.id)
+                debuggerDao.delete(it)
+            }
+        }
     }
 
     // ---------- 统计 / 导出 / 备份 ----------
@@ -458,7 +569,7 @@ class Repository(private val db: AppDatabase) {
 
     companion object {
         const val BACKUP_APP_TAG = "power-debug-log"
-        const val BACKUP_SCHEMA = 5
+        const val BACKUP_SCHEMA = 6
     }
 
     /**
@@ -468,6 +579,7 @@ class Repository(private val db: AppDatabase) {
      * schemaVersion 3：新增 plannedItems（柜子实例的预选待测清单）。
      * schemaVersion 4：plannedItems 增加三态结果 result 与关联故障 faultId。
      * schemaVersion 5：新增 debuggers（调试员名单）。
+     * schemaVersion 6：新增 deletedItems（删除墓碑，删除操作随同步传播）。
      */
     suspend fun backupJson(): String {
         val jo = JSONObject()
@@ -550,6 +662,15 @@ class Repository(private val db: AppDatabase) {
                 JSONObject()
                     .put("id", it.id).put("name", it.name)
                     .put("createdAt", it.createdAt).put("updatedAt", it.updatedAt)
+            })
+        )
+        // v6：删除墓碑（记录"什么删过了"，合并端据此删除本地对应行）
+        jo.put(
+            "deletedItems",
+            arr(tombDao.allOnce().map {
+                JSONObject()
+                    .put("id", it.id).put("tbl", it.tbl).put("itemId", it.itemId)
+                    .put("deletedAt", it.deletedAt)
             })
         )
         return jo.toString(2)
@@ -647,6 +768,17 @@ class Repository(private val db: AppDatabase) {
                     pb.debuggers += Debugger(
                         id = getString("id"), name = getString("name"),
                         createdAt = optLong("createdAt"), updatedAt = optLong("updatedAt")
+                    )
+                }
+            }
+            // v6起新增：删除墓碑；旧版备份无此数组静默跳过
+            root.optJSONArray("deletedItems")?.let { a ->
+                for (i in 0 until a.length()) with(a.getJSONObject(i)) {
+                    val tbl = optString("tbl")
+                    val itemId = optString("itemId")
+                    if (tbl.isNotEmpty() && itemId.isNotEmpty()) pb.tombs += DeletedItem(
+                        id = optString("id").ifBlank { newId() },
+                        tbl = tbl, itemId = itemId, deletedAt = optLong("deletedAt")
                     )
                 }
             }
@@ -753,6 +885,7 @@ class Repository(private val db: AppDatabase) {
         val faults = mutableListOf<FaultRecord>()
         val planned = mutableListOf<PlannedItem>()
         val debuggers = mutableListOf<Debugger>()
+        val tombs = mutableListOf<DeletedItem>()
 
         if (version >= 2) {
             root.optJSONArray("projects")?.let { a ->
@@ -836,6 +969,16 @@ class Repository(private val db: AppDatabase) {
                     )
                 }
             }
+            root.optJSONArray("deletedItems")?.let { a ->
+                for (i in 0 until a.length()) with(a.getJSONObject(i)) {
+                    val tbl = optString("tbl")
+                    val itemId = optString("itemId")
+                    if (tbl.isNotEmpty() && itemId.isNotEmpty()) tombs += DeletedItem(
+                        id = optString("id").ifBlank { newId() },
+                        tbl = tbl, itemId = itemId, deletedAt = optLong("deletedAt")
+                    )
+                }
+            }
         } else {
             // v1：解析后走同一套uuid重映射（复用parse逻辑）
             val pb = parseBackup(text)
@@ -849,6 +992,7 @@ class Repository(private val db: AppDatabase) {
             candDao.wipe(); typeDao.wipe(); projectDao.wipe()
             plannedDao.wipe()
             debuggerDao.wipe()
+            tombDao.wipe()
             projectDao.insertAll(projects)
             typeDao.insertAll(types)
             candDao.insertAll(cands)
@@ -857,12 +1001,16 @@ class Repository(private val db: AppDatabase) {
             faultDao.upsertAll(faults)
             if (planned.isNotEmpty()) plannedDao.insertAll(planned)
             if (debuggers.isNotEmpty()) debuggerDao.insertAll(debuggers)
+            if (tombs.isNotEmpty()) tombDao.insertAll(tombs)
         }
         return Stats(projects.size, types.size, instances.size, logs.size, faults.count { it.status == FaultRecord.STATUS_PENDING })
     }
 
     /**
-     * 智能合并远端数据到本机（按id去重，同id冲突时 updatedAt 新者胜，绝不删除本地数据）。
+     * 智能合并远端数据到本机：
+     * 1) 墓碑先行——远端删除记录落库并应用删除（经DAO删除，级联与本机一致）；
+     * 2) 数据按id去重、同id冲突updatedAt新者胜；已删id与父链已断的孤儿行一律跳过，
+     *    防止被删记录借旧快照复活。
      */
     suspend fun mergeJson(text: String): MergeResult = applyMerge(parseBackup(text))
 
@@ -871,6 +1019,23 @@ class Repository(private val db: AppDatabase) {
      */
     suspend fun mergePreview(text: String): MergeResult {
         val pb = parseBackup(text)
+        // 墓碑全集 = 本机已有 ∪ 快照带来的
+        val tombs = HashMap<String, HashSet<String>>()
+        tombDao.allOnce().forEach { tombs.getOrPut(it.tbl) { HashSet() }.add(it.itemId) }
+        pb.tombs.forEach { tombs.getOrPut(it.tbl) { HashSet() }.add(it.itemId) }
+        fun dead(tbl: String, id: String) = tombs[tbl]?.contains(id) == true
+
+        // 预计本机会被墓碑删掉的行数（各表直接命中数；级联另计）
+        var approxDel = 0
+        approxDel += projectDao.allOnce().count { dead(DeletedItem.TBL_PROJECTS, it.id) }
+        approxDel += typeDao.allOnce().count { dead(DeletedItem.TBL_TYPES, it.id) }
+        approxDel += candDao.allOnce().count { dead(DeletedItem.TBL_CANDS, it.id) }
+        approxDel += instanceDao.allOnce().count { dead(DeletedItem.TBL_INSTANCES, it.id) }
+        approxDel += logDao.allOnce().count { dead(DeletedItem.TBL_LOGS, it.id) }
+        approxDel += faultDao.allOnce().count { dead(DeletedItem.TBL_FAULTS, it.id) }
+        approxDel += plannedDao.allOnce().count { dead(DeletedItem.TBL_PLANNED, it.id) }
+        approxDel += debuggerDao.allOnce().count { dead(DeletedItem.TBL_DEBUGGERS, it.id) }
+
         val lp = projectDao.allOnce().associateBy { it.id }
         val lt = typeDao.allOnce().associateBy { it.id }
         val lc = candDao.allOnce()
@@ -890,69 +1055,148 @@ class Repository(private val db: AppDatabase) {
         val ldById = ld.associateBy { it.id }
         val ldNames = ld.map { it.name }.toHashSet()
 
+        // 存活父集合 = 本机现存 ∪ 快照中未被删的
+        val aliveP = buildSet {
+            addAll(lp.keys); pb.projects.forEach { if (!dead(DeletedItem.TBL_PROJECTS, it.id)) add(it.id) }
+        }
+        val aliveT = buildSet {
+            addAll(lt.keys); pb.types.forEach { if (!dead(DeletedItem.TBL_TYPES, it.id)) add(it.id) }
+        }
+        val aliveI = buildSet {
+            addAll(li.keys)
+            pb.instances.filter { it.projectId in aliveP && it.typeId in aliveT && !dead(DeletedItem.TBL_INSTANCES, it.id) }
+                .forEach { add(it.id) }
+        }
+        val aliveL = buildSet {
+            addAll(ll.keys)
+            pb.logs.filter { it.instanceId in aliveI && !dead(DeletedItem.TBL_LOGS, it.id) }.forEach { add(it.id) }
+        }
+
         return MergeResult(
-            newProjects = pb.projects.count { it.id !in lp },
-            updProjects = pb.projects.count { newer(lp.mapValues { it.value.updatedAt }, it.id, it.updatedAt) },
-            newTypes = pb.types.count { it.id !in lt },
-            updTypes = pb.types.count { newer(lt.mapValues { it.value.updatedAt }, it.id, it.updatedAt) },
-            newCands = pb.cands.count { it.id !in lcById && (it.typeId to it.content) !in lcPair },
-            newInstances = pb.instances.count { it.id !in li },
-            updInstances = pb.instances.count { newer(li.mapValues { it.value.updatedAt }, it.id, it.updatedAt) },
-            newLogs = pb.logs.count { it.id !in ll },
-            updLogs = pb.logs.count { newer(ll.mapValues { it.value.updatedAt }, it.id, it.updatedAt) },
-            newFaults = pb.faults.count { it.id !in lf },
-            updFaults = pb.faults.count { newer(lf.mapValues { it.value.updatedAt }, it.id, it.updatedAt) },
-            newPlanned = pb.planned.count { it.id !in lplById && (it.instanceId to it.content) !in lplPair },
-            updPlanned = pb.planned.count { newer(lplById.mapValues { it.value.updatedAt }, it.id, it.updatedAt) },
-            newDebuggers = pb.debuggers.count { it.id !in ldById && it.name !in ldNames },
+            newProjects = pb.projects.count { it.id !in lp && !dead(DeletedItem.TBL_PROJECTS, it.id) },
+            updProjects = pb.projects.count { !dead(DeletedItem.TBL_PROJECTS, it.id) && newer(lp.mapValues { it.value.updatedAt }, it.id, it.updatedAt) },
+            newTypes = pb.types.count { it.id !in lt && !dead(DeletedItem.TBL_TYPES, it.id) },
+            updTypes = pb.types.count { !dead(DeletedItem.TBL_TYPES, it.id) && newer(lt.mapValues { it.value.updatedAt }, it.id, it.updatedAt) },
+            newCands = pb.cands.count {
+                it.typeId in aliveT && it.id !in lcById &&
+                    (it.typeId to it.content) !in lcPair && !dead(DeletedItem.TBL_CANDS, it.id)
+            },
+            newInstances = pb.instances.count {
+                it.id !in li && it.projectId in aliveP && it.typeId in aliveT && !dead(DeletedItem.TBL_INSTANCES, it.id)
+            },
+            updInstances = pb.instances.count { !dead(DeletedItem.TBL_INSTANCES, it.id) && newer(li.mapValues { it.value.updatedAt }, it.id, it.updatedAt) },
+            newLogs = pb.logs.count { it.id !in ll && it.instanceId in aliveI && !dead(DeletedItem.TBL_LOGS, it.id) },
+            updLogs = pb.logs.count { !dead(DeletedItem.TBL_LOGS, it.id) && newer(ll.mapValues { it.value.updatedAt }, it.id, it.updatedAt) },
+            newFaults = pb.faults.count {
+                it.id !in lf && (it.logId.isBlank() || it.logId in aliveL) && !dead(DeletedItem.TBL_FAULTS, it.id)
+            },
+            updFaults = pb.faults.count { !dead(DeletedItem.TBL_FAULTS, it.id) && newer(lf.mapValues { it.value.updatedAt }, it.id, it.updatedAt) },
+            newPlanned = pb.planned.count {
+                it.instanceId in aliveI && it.id !in lplById &&
+                    (it.instanceId to it.content) !in lplPair && !dead(DeletedItem.TBL_PLANNED, it.id)
+            },
+            updPlanned = pb.planned.count { !dead(DeletedItem.TBL_PLANNED, it.id) && newer(lplById.mapValues { it.value.updatedAt }, it.id, it.updatedAt) },
+            newDebuggers = pb.debuggers.count {
+                it.id !in ldById && it.name !in ldNames && !dead(DeletedItem.TBL_DEBUGGERS, it.id)
+            },
             updDebuggers = pb.debuggers.count { d ->
+                if (dead(DeletedItem.TBL_DEBUGGERS, d.id)) return@count false
                 val local = ldById[d.id] ?: return@count false
                 if (d.updatedAt <= local.updatedAt) return@count false
                 // 改名目标与其他本地行重名时无法安全更新（唯一索引），跳过
                 ld.none { it.id != d.id && it.name == d.name }
-            }
+            },
+            appliedTombs = approxDel
+        )
+    }
         )
     }
 
     private suspend fun applyMerge(pb: ParsedBackup): MergeResult {
         val r = MergeResult()
         db.withTransaction {
+            // ---------- 0) 墓碑先行：远端墓碑落库（IGNORE去重）→ 统一应用删除 ----------
+            if (pb.tombs.isNotEmpty()) tombDao.insertAll(pb.tombs)
+            val tombs = HashMap<String, HashSet<String>>()
+            tombDao.allOnce().forEach { tombs.getOrPut(it.tbl) { HashSet() }.add(it.itemId) }
+            fun dead(tbl: String, id: String) = tombs[tbl]?.contains(id) == true
+
+            // 经DAO删除（非裸SQL），外键级联与本机直接删除完全一致，各设备最终状态收敛
+            var applied = 0
+            projectDao.allOnce().filter { dead(DeletedItem.TBL_PROJECTS, it.id) }.let {
+                if (it.isNotEmpty()) { projectDao.deleteAll(it); applied += it.size }
+            }
+            typeDao.allOnce().filter { dead(DeletedItem.TBL_TYPES, it.id) }.let {
+                if (it.isNotEmpty()) { typeDao.deleteAll(it); applied += it.size }
+            }
+            candDao.allOnce().filter { dead(DeletedItem.TBL_CANDS, it.id) }.let {
+                if (it.isNotEmpty()) { candDao.deleteAll(it); applied += it.size }
+            }
+            instanceDao.allOnce().filter { dead(DeletedItem.TBL_INSTANCES, it.id) }.let {
+                if (it.isNotEmpty()) { instanceDao.deleteAll(it); applied += it.size }
+            }
+            logDao.allOnce().filter { dead(DeletedItem.TBL_LOGS, it.id) }.let {
+                if (it.isNotEmpty()) { logDao.deleteAll(it); applied += it.size }
+            }
+            faultDao.allOnce().filter { dead(DeletedItem.TBL_FAULTS, it.id) }.let {
+                if (it.isNotEmpty()) { faultDao.deleteAll(it); applied += it.size }
+            }
+            plannedDao.allOnce().filter { dead(DeletedItem.TBL_PLANNED, it.id) }.let {
+                if (it.isNotEmpty()) { plannedDao.deleteAll(it); applied += it.size }
+            }
+            debuggerDao.allOnce().filter { dead(DeletedItem.TBL_DEBUGGERS, it.id) }.let {
+                if (it.isNotEmpty()) { debuggerDao.deleteAll(it); applied += it.size }
+            }
+            r.appliedTombs = applied
+
+            // ---------- 1) 数据合并：跳过已删id与父链已断的孤儿行，防借旧快照复活 ----------
             // 父表在前，保证外键引用顺序；UPDATE不触发级联，父行更新安全
             val lp = projectDao.allOnce().associateBy { it.id }
-            val insP = pb.projects.filter { it.id !in lp }
-            val updP = pb.projects.filter { lp[it.id]?.let { l -> it.updatedAt > l.updatedAt } == true }
+            val insP = pb.projects.filter { it.id !in lp && !dead(DeletedItem.TBL_PROJECTS, it.id) }
+            val updP = pb.projects.filter { !dead(DeletedItem.TBL_PROJECTS, it.id) && lp[it.id]?.let { l -> it.updatedAt > l.updatedAt } == true }
             projectDao.insertAll(insP); projectDao.updateAll(updP)
             r.newProjects = insP.size; r.updProjects = updP.size
+            val aliveP = lp.keys + insP.map { it.id }
 
             val lt = typeDao.allOnce().associateBy { it.id }
-            val insT = pb.types.filter { it.id !in lt }
-            val updT = pb.types.filter { lt[it.id]?.let { l -> it.updatedAt > l.updatedAt } == true }
+            val insT = pb.types.filter { it.id !in lt && !dead(DeletedItem.TBL_TYPES, it.id) }
+            val updT = pb.types.filter { !dead(DeletedItem.TBL_TYPES, it.id) && lt[it.id]?.let { l -> it.updatedAt > l.updatedAt } == true }
             typeDao.insertAll(insT); typeDao.updateAll(updT)
             r.newTypes = insT.size; r.updTypes = updT.size
+            val aliveT = lt.keys + insT.map { it.id }
 
             val lc = candDao.allOnce()
             val lcById = lc.associateBy { it.id }
             val lcPair = lc.map { it.typeId to it.content }.toHashSet()
-            val insC = pb.cands.filter { it.id !in lcById && (it.typeId to it.content) !in lcPair }
-            val updC = pb.cands.filter { lcById[it.id]?.let { l -> it.updatedAt > l.updatedAt } == true }
+            val insC = pb.cands.filter {
+                it.typeId in aliveT && it.id !in lcById &&
+                    (it.typeId to it.content) !in lcPair && !dead(DeletedItem.TBL_CANDS, it.id)
+            }
+            val updC = pb.cands.filter { !dead(DeletedItem.TBL_CANDS, it.id) && lcById[it.id]?.let { l -> it.updatedAt > l.updatedAt } == true }
             candDao.insertAll(insC); candDao.insertAll(updC) // IGNORE策略：内容重复时静默跳过
             r.newCands = insC.size
 
             val li = instanceDao.allOnce().associateBy { it.id }
-            val insI = pb.instances.filter { it.id !in li }
-            val updI = pb.instances.filter { li[it.id]?.let { l -> it.updatedAt > l.updatedAt } == true }
+            val insI = pb.instances.filter {
+                it.id !in li && it.projectId in aliveP && it.typeId in aliveT && !dead(DeletedItem.TBL_INSTANCES, it.id)
+            }
+            val updI = pb.instances.filter { !dead(DeletedItem.TBL_INSTANCES, it.id) && li[it.id]?.let { l -> it.updatedAt > l.updatedAt } == true }
             instanceDao.insertAll(insI); instanceDao.updateAll(updI)
             r.newInstances = insI.size; r.updInstances = updI.size
+            val aliveI = li.keys + insI.map { it.id }
 
             val ll = logDao.allOnce().associateBy { it.id }
-            val insL = pb.logs.filter { it.id !in ll }
-            val updL = pb.logs.filter { ll[it.id]?.let { l -> it.updatedAt > l.updatedAt } == true }
+            val insL = pb.logs.filter { it.id !in ll && it.instanceId in aliveI && !dead(DeletedItem.TBL_LOGS, it.id) }
+            val updL = pb.logs.filter { !dead(DeletedItem.TBL_LOGS, it.id) && ll[it.id]?.let { l -> it.updatedAt > l.updatedAt } == true }
             logDao.insertAll(insL); logDao.updateAll(updL)
             r.newLogs = insL.size; r.updLogs = updL.size
+            val aliveL = ll.keys + insL.map { it.id }
 
             val lf = faultDao.allOnce().associateBy { it.id }
-            val insF = pb.faults.filter { it.id !in lf }
-            val updF = pb.faults.filter { lf[it.id]?.let { l -> it.updatedAt > l.updatedAt } == true }
+            val insF = pb.faults.filter {
+                it.id !in lf && (it.logId.isBlank() || it.logId in aliveL) && !dead(DeletedItem.TBL_FAULTS, it.id)
+            }
+            val updF = pb.faults.filter { !dead(DeletedItem.TBL_FAULTS, it.id) && lf[it.id]?.let { l -> it.updatedAt > l.updatedAt } == true }
             faultDao.upsertAll(insF); faultDao.updateAll(updF)
             r.newFaults = insF.size; r.updFaults = updF.size
 
@@ -960,8 +1204,11 @@ class Repository(private val db: AppDatabase) {
             val lpl = plannedDao.allOnce()
             val lplById = lpl.associateBy { it.id }
             val lplPair = lpl.map { it.instanceId to it.content }.toHashSet()
-            val insPl = pb.planned.filter { it.id !in lplById && (it.instanceId to it.content) !in lplPair }
-            val updPl = pb.planned.filter { lplById[it.id]?.let { l -> it.updatedAt > l.updatedAt } == true }
+            val insPl = pb.planned.filter {
+                it.instanceId in aliveI && it.id !in lplById &&
+                    (it.instanceId to it.content) !in lplPair && !dead(DeletedItem.TBL_PLANNED, it.id)
+            }
+            val updPl = pb.planned.filter { !dead(DeletedItem.TBL_PLANNED, it.id) && lplById[it.id]?.let { l -> it.updatedAt > l.updatedAt } == true }
             plannedDao.insertAll(insPl); plannedDao.updateAll(updPl)
             r.newPlanned = insPl.size; r.updPlanned = updPl.size
 
@@ -970,8 +1217,9 @@ class Repository(private val db: AppDatabase) {
             val ld = debuggerDao.allOnce()
             val ldById = ld.associateBy { it.id }
             val ldNames = ld.map { it.name }.toHashSet()
-            val insD = pb.debuggers.filter { it.id !in ldById && it.name !in ldNames }
+            val insD = pb.debuggers.filter { it.id !in ldById && it.name !in ldNames && !dead(DeletedItem.TBL_DEBUGGERS, it.id) }
             val updD = pb.debuggers.filter { d ->
+                if (dead(DeletedItem.TBL_DEBUGGERS, d.id)) return@filter false
                 val local = ldById[d.id] ?: return@filter false
                 if (d.updatedAt <= local.updatedAt) return@filter false
                 ld.none { it.id != d.id && it.name == d.name }

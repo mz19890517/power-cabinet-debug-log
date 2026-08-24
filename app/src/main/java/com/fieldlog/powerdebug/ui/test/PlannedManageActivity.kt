@@ -88,16 +88,9 @@ class PlannedManageActivity : AppCompatActivity() {
             }
         }
 
-        // 从所属类型候选池补充缺失条目
+        // 从候选池补充 → 打开候选选择器（按使用频次排序，手动勾选，不再整池全加）
         findViewById<View>(R.id.btn_sync_pool).setOnClickListener {
-            lifecycleScope.launch {
-                val added = App.repo.syncPlannedFromPool(instanceId, typeId)
-                Toast.makeText(
-                    this@PlannedManageActivity,
-                    getString(R.string.planned_sync_done, added),
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
+            startActivity(CandidatePickerActivity.intent(this, instanceId))
         }
     }
 

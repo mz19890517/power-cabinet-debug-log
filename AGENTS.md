@@ -25,10 +25,10 @@
 
 ## 数据库与备份格式
 
-- Room schema 当前 version=5（迁移链 1→2→3→4→5 必须保持完整，禁止 fallbackToDestructiveMigration）
-- JSON 备份 schemaVersion=5，字段名=数据库列名，是将来 PC/网页端的交换格式
+- Room schema 当前 version=6（迁移链 1→2→3→4→5→6 必须保持完整，禁止 fallbackToDestructiveMigration）
+- JSON 备份 schemaVersion=6，字段名=数据库列名，是将来 PC/网页端的交换格式
 - 新增表/字段：DB version+1 写纯SQL迁移 + 备份版本+1 + parseBackup/restoreJson/merge 三处同步 + README 记录变更说明
-- 合并语义：UUID主键按 id 去重插入，同 id 冲突 updatedAt 新者胜，绝不删除本地数据
+- 合并语义：UUID主键按 id 去重插入，同 id 冲突 updatedAt 新者胜；**删除通过墓碑传播**（v6 起 deleted_items 表：显式删除入口写墓碑，合并时先落库远端墓碑→按表经DAO删除触发级联→跳过已删id与父链已断的孤儿行，防止被删数据借旧快照复活）
 
 ## 业务模型速查
 
@@ -36,6 +36,7 @@ projects → cabinet_types(候选池 candidate_items) → cabinet_instances → 
 planned_items：柜子实例的预选待测清单，三态 result（0未测/1通过/2未通过），未通过项复测✓才转绿。
 测试员账号 tester_accounts + WebDAV 团队互通（util/WebDavSync.kt，快照 backup_<账号>_<本机标识>.json，同账号多机不互覆）。
 debuggers：调试员名单（v5新增），与登录账号无关，增/改/删全部要超级口令；本机「当前调试员」存SyncStore.currentDebugger（写日志自动归属、点击可切换），日志测试人员绝不回落到登录账号；改名/删除不动历史日志。复测✓时该项关联的未解决故障由Repository自动标记已解决（faultDao.resolveByIds）。
+常用模板（v2.9）：项目卡长按「加入常用模板」= saveProjectAsTemplate 把项目各柜启用待测项沉淀进各自类型候选池；「从候选池补充」按钮打开 CandidatePickerActivity 手选器（candidatesByUsage 按使用频次降序=该类型全部柜子清单出现次数，长按拖动连续多选、常用选取=使用≥2次）；柜子长按「从别的柜子拉取」= pullPlannedFromCabinet 整体覆盖本柜清单（旧项记墓碑）。
 
 ## 其他约定
 

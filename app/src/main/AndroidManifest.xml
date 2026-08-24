@@ -40,6 +40,10 @@
             android:exported="false" />
 
         <activity
+            android:name=".ui.test.CandidatePickerActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".ui.test.TestChecklistActivity"
             android:exported="false" />
     </application>
