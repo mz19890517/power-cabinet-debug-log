@@ -119,12 +119,10 @@ class DeviceFragment : Fragment() {
     private fun saveAsTemplate(item: ProjectListItem) {
         viewLifecycleOwner.lifecycleScope.launch {
             val added = App.repo.saveProjectAsTemplate(item.project.id)
-            Toast.makeText(
-                requireContext(),
-                if (added == 0) R.string.template_none
-                else getString(R.string.template_done_fmt, added, item.project.name),
-                Toast.LENGTH_LONG
-            ).show()
+            val msg =
+                if (added == 0) getString(R.string.template_none)
+                else getString(R.string.template_done_fmt, added, item.project.name)
+            Toast.makeText(requireContext(), msg, Toast.LENGTH_LONG).show()
         }
     }
 
