@@ -298,6 +298,20 @@ interface DebugLogDao {
     @Query("SELECT COUNT(*) FROM debug_logs WHERE instanceId = :instanceId")
     suspend fun countLogsOf(instanceId: String): Int
 
+    @Query(
+        """SELECT l.*, p.name AS projectName, t.name AS typeName, i.typeId AS typeId, i.name AS instanceName,
+        i.deviceCode AS deviceCode, i.installer AS installer,
+        (SELECT COUNT(*) FROM fault_records f WHERE f.logId = l.id AND f.status = 0) AS pendingCount,
+        (SELECT COUNT(*) FROM fault_records f WHERE f.logId = l.id AND f.status = 1) AS resolvedCount
+        FROM debug_logs l
+        INNER JOIN instances i ON l.instanceId = i.id
+        INNER JOIN cabinet_types t ON i.typeId = t.id
+        INNER JOIN projects p ON i.projectId = p.id
+        WHERE l.instanceId = :instanceId
+        ORDER BY l.createdAt"""
+    )
+    suspend fun byInstanceOnce(instanceId: String): List<LogListItem>
+
     @Insert
     suspend fun insert(l: DebugLog)
 

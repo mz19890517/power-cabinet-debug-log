@@ -18,15 +18,19 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.fieldlog.powerdebug.App
 import com.fieldlog.powerdebug.R
+import com.fieldlog.powerdebug.data.db.DebugLog
+import com.fieldlog.powerdebug.data.db.FaultRecord
 import com.fieldlog.powerdebug.data.db.PlannedItem
 import com.fieldlog.powerdebug.util.DT
 import com.fieldlog.powerdebug.util.SyncStore
 import kotlinx.coroutines.launch
 
 /**
- * 「开始测试」现场模式：每项三态操作——✓通过 / ✗未通过(强制填故障现象)。
- * 未通过项下次仍出现在清单里供复测；生成一条合并日志，未通过项自动带故障记录。
- * v2.18：支持多故障输入、故障列表对话框逐个通过、驳回通过。
+ * 「开始测试」现场模式：
+ * - 未测项：点通过→直接通过；点问题→弹多故障输入对话框；点文字→无操作
+ * - 有故障项：点通过→直接通过并消除故障；点问题/点文字→弹故障列表对话框（每条可单独通过）
+ * - 已通过项（历史）：点文字→弹测试流程+历史故障时间线；长按→弹菜单→驳回
+ * - 生成日志：每个测试项独立一条日志（不再合并）
  */
 class TestChecklistActivity : AppCompatActivity() {
 
@@ -40,7 +44,6 @@ class TestChecklistActivity : AppCompatActivity() {
     private val passIds = mutableSetOf<String>()
     private val failNotes = mutableMapOf<String, String>() // itemId -> 换行分隔的多条故障现象
     private val lastReasons = mutableMapOf<String, String>() // 上次未通过的原因（faultId->symptom）
-    /** 已通过项（本次只读展示，不再操作） */
     private val passedItems = mutableListOf<PlannedItem>()
     private lateinit var adapter: CheckAdapter
     private lateinit var tvCount: TextView
@@ -79,7 +82,6 @@ class TestChecklistActivity : AppCompatActivity() {
                 App.db.plannedItemDao().allOfInstanceOnce(instanceId)
                     .filter { it.enabled && it.result == PlannedItem.RESULT_PASS }
             )
-            // 加载上次未通过的故障原因（支持逗号分隔多faultId）
             val allFaultIds = pending.map { it.faultId }
                 .flatMap { id -> id.split(",").filter { it.isNotEmpty() } }
             if (allFaultIds.isNotEmpty()) {
@@ -112,10 +114,7 @@ class TestChecklistActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val names = App.repo.debuggers().map { it.name }
             if (names.isEmpty()) {
-                Toast.makeText(
-                    this@TestChecklistActivity,
-                    R.string.debugger_empty_hint, Toast.LENGTH_LONG
-                ).show()
+                Toast.makeText(this@TestChecklistActivity, R.string.debugger_empty_hint, Toast.LENGTH_LONG).show()
                 return@launch
             }
             val cur = SyncStore.currentDebugger(this@TestChecklistActivity)
@@ -132,10 +131,9 @@ class TestChecklistActivity : AppCompatActivity() {
     }
 
     private fun refreshCount() {
-        val total = pendingTotal
         tvCount.text = getString(
             R.string.check_count_fmt,
-            passIds.size + failNotes.size, total, passIds.size, failNotes.size
+            passIds.size + failNotes.size, pendingTotal, passIds.size, failNotes.size
         )
         btnGenerate.isEnabled = passIds.isNotEmpty() || failNotes.isNotEmpty()
     }
@@ -163,7 +161,7 @@ class TestChecklistActivity : AppCompatActivity() {
     private fun doGenerate(testerInput: String) {
         lifecycleScope.launch {
             try {
-                val logId = App.repo.startTestSave(
+                App.repo.startTestSave(
                     instanceId,
                     passIds.toList(),
                     failNotes.map { it.key to it.value.split("\n").filter { s -> s.isNotBlank() } },
@@ -177,6 +175,8 @@ class TestChecklistActivity : AppCompatActivity() {
             }
         }
     }
+
+    // ---------- 对话框 ----------
 
     /** 多故障输入对话框：换行分隔多条故障 */
     private fun showMultiFaultDialog(item: PlannedItem) {
@@ -200,7 +200,6 @@ class TestChecklistActivity : AppCompatActivity() {
                     Toast.makeText(this, R.string.err_symptom_empty, Toast.LENGTH_SHORT).show()
                     return@setOnClickListener
                 }
-                // 换行分隔，过滤空行
                 val faults = text.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
                 if (faults.isEmpty()) {
                     Toast.makeText(this, R.string.err_symptom_empty, Toast.LENGTH_SHORT).show()
@@ -225,8 +224,7 @@ class TestChecklistActivity : AppCompatActivity() {
         }
         val faults = faultText.split("\n").filter { it.isNotBlank() }.toMutableList()
 
-        val adapter = FaultListAdapter(faults) { position ->
-            // 单条故障通过
+        val faultAdapter = FaultListAdapter(faults) { position ->
             if (position in faults.indices) {
                 faults.removeAt(position)
                 if (faults.isEmpty()) {
@@ -235,7 +233,7 @@ class TestChecklistActivity : AppCompatActivity() {
                 } else {
                     failNotes[item.id] = faults.joinToString("\n")
                 }
-                adapter.notifyDataSetChanged()
+                faultAdapter.notifyDataSetChanged()
                 this.adapter.notifyDataSetChanged()
                 refreshCount()
                 Toast.makeText(this, getString(R.string.fault_pass_ok, item.content), Toast.LENGTH_SHORT).show()
@@ -244,7 +242,7 @@ class TestChecklistActivity : AppCompatActivity() {
 
         val rv = RecyclerView(this).apply {
             layoutManager = LinearLayoutManager(this@TestChecklistActivity)
-            this.adapter = adapter
+            this.adapter = faultAdapter
             setPadding(48, 16, 48, 0)
         }
 
@@ -258,7 +256,75 @@ class TestChecklistActivity : AppCompatActivity() {
             .show()
     }
 
-    /** 已通过项点击：弹窗驳回通过+添加故障原因 */
+    /** 已通过项：测试流程+历史故障时间线对话框（只读） */
+    private fun showTimelineDialog(item: PlannedItem) {
+        lifecycleScope.launch {
+            val timeline = App.repo.historyTimeline(instanceId, item.content)
+
+            if (timeline.isEmpty()) {
+                // 无历史记录时显示基本信息
+                val sb = StringBuilder()
+                sb.appendLine(item.content)
+                if (item.doneAt > 0) sb.appendLine("通过时间：${DT.full(item.doneAt)}")
+                AlertDialog.Builder(this@TestChecklistActivity)
+                    .setTitle(getString(R.string.timeline_title, item.content))
+                    .setMessage(sb.toString())
+                    .setPositiveButton(R.string.close, null)
+                    .show()
+                return@launch
+            }
+
+            val tv = TextView(this@TestChecklistActivity).apply {
+                setPadding(48, 32, 48, 16)
+                textSize = 15f
+            }
+            val rv = RecyclerView(this@TestChecklistActivity).apply {
+                layoutManager = LinearLayoutManager(this@TestChecklistActivity)
+                adapter = TimelineAdapter(timeline)
+            }
+
+            val container = android.widget.LinearLayout(this@TestChecklistActivity).apply {
+                orientation = android.widget.LinearLayout.VERTICAL
+                addView(tv)
+                addView(rv)
+            }
+
+            // 统计信息
+            val totalFaults = timeline.sumOf { it.second.size }
+            val pendingFaults = timeline.sumOf { it.second.count { f -> f.status == FaultRecord.STATUS_PENDING } }
+            tv.text = buildString {
+                appendLine("共 ${timeline.size} 次测试")
+                if (totalFaults > 0) {
+                    append("故障 $totalFaults 条")
+                    if (pendingFaults > 0) append("（待处理 $pendingFaults）")
+                    appendLine()
+                }
+                append("当前状态：✓ 已通过")
+            }
+
+            AlertDialog.Builder(this@TestChecklistActivity)
+                .setTitle(getString(R.string.timeline_title, item.content))
+                .setView(container)
+                .setPositiveButton(R.string.close, null)
+                .show()
+        }
+    }
+
+    /** 已通过项长按：弹出菜单 → 驳回 */
+    private fun showPassedContextMenu(item: PlannedItem) {
+        val options = arrayOf(getString(R.string.reject_menu_title))
+        AlertDialog.Builder(this)
+            .setTitle(item.content)
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> showRejectPassDialog(item)
+                }
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    /** 驳回通过对话框：输入故障原因 */
     private fun showRejectPassDialog(item: PlannedItem) {
         val et = EditText(this).apply {
             hint = getString(R.string.fault_multi_input_hint)
@@ -289,6 +355,8 @@ class TestChecklistActivity : AppCompatActivity() {
             .show()
     }
 
+    // ---------- 适配器 ----------
+
     private inner class CheckAdapter : RecyclerView.Adapter<CheckVH>() {
         private val data = mutableListOf<PlannedItem>()
 
@@ -302,7 +370,7 @@ class TestChecklistActivity : AppCompatActivity() {
         override fun getItemCount() = data.size + passedItems.size
 
         override fun onBindViewHolder(h: CheckVH, pos: Int) {
-            // 已通过只读项
+            // ===== 已通过历史项 =====
             if (pos >= data.size) {
                 val p = passedItems[pos - data.size]
                 h.tvText.text = p.content
@@ -313,11 +381,15 @@ class TestChecklistActivity : AppCompatActivity() {
                     else getString(R.string.planned_passed)
                 h.btnPass.visibility = View.GONE
                 h.btnFail.visibility = View.GONE
-                // 已通过项点击：驳回通过
-                h.tvText.setOnClickListener { showRejectPassDialog(p) }
+                // 点击文字 → 时间线
+                h.tvText.setOnClickListener { showTimelineDialog(p) }
+                // 长按文字 → 驳回菜单
+                h.tvText.setOnLongClickListener { showPassedContextMenu(p); true }
+                h.tvText.isLongClickable = true
                 return
             }
 
+            // ===== 待测试项 =====
             val item = data[pos]
             val markedPass = item.id in passIds
             val markedFail = item.id in failNotes
@@ -326,18 +398,13 @@ class TestChecklistActivity : AppCompatActivity() {
             val faultText = failNotes[item.id]
             val faultCount = faultText?.split("\n")?.count { it.isNotBlank() } ?: 0
 
-            // 故障摘要文本
             val faultSummary = when {
                 markedFail && faultCount == 1 -> faultText?.trim() ?: ""
                 markedFail && faultCount > 1 -> getString(R.string.fault_count_fmt, faultCount)
                 !markedFail && item.result == PlannedItem.RESULT_FAIL && item.faultId.isNotBlank() -> {
-                    // 上次未通过的原因
                     val ids = item.faultId.split(",").filter { it.isNotEmpty() }
-                    if (ids.size == 1) {
-                        "上次未通过：${lastReasons[ids[0]] ?: "原因见日志"}"
-                    } else {
-                        "上次未通过：${ids.size}条故障"
-                    }
+                    if (ids.size == 1) "上次未通过：${lastReasons[ids[0]] ?: "原因见日志"}"
+                    else "上次未通过：${ids.size}条故障"
                 }
                 else -> ""
             }
@@ -355,6 +422,7 @@ class TestChecklistActivity : AppCompatActivity() {
             h.tvReason.visibility = if (faultSummary.isBlank()) View.GONE else View.VISIBLE
             h.tvReason.text = faultSummary
 
+            // 通过按钮：未测→直接通过；有故障→直接通过并清除故障
             h.btnPass.apply {
                 visibility = View.VISIBLE
                 alpha = if (markedPass) 1f else 0.55f
@@ -369,13 +437,14 @@ class TestChecklistActivity : AppCompatActivity() {
                     notifyDataSetChanged(); refreshCount()
                 }
             }
+
+            // 问题按钮：有故障→故障列表；未测→多故障输入
             h.btnFail.apply {
                 visibility = View.VISIBLE
                 alpha = if (markedFail) 1f else 0.55f
                 text = if (markedFail) "✗ 已记" else getString(R.string.btn_fail)
                 setOnClickListener {
                     if (markedFail) {
-                        // 已有故障时：弹出故障列表对话框（可逐个通过或继续添加）
                         showFaultListDialog(item)
                     } else {
                         showMultiFaultDialog(item)
@@ -383,12 +452,14 @@ class TestChecklistActivity : AppCompatActivity() {
                 }
             }
 
-            // 点击测试项行（不含按钮）→故障列表对话框
+            // 点击文字：
+            // 有故障项 → 故障列表对话框
+            // 上次未通过项 → 也可弹故障列表（查看历史故障）
+            // 未测项 → 无操作
             h.tvText.setOnClickListener {
-                if (markedFail) {
-                    showFaultListDialog(item)
-                } else if (item.result == PlannedItem.RESULT_FAIL && item.faultId.isNotBlank()) {
-                    showRejectPassDialog(item)
+                when {
+                    markedFail -> showFaultListDialog(item)
+                    item.result == PlannedItem.RESULT_FAIL && item.faultId.isNotBlank() -> showFaultListDialog(item)
                 }
             }
         }
@@ -423,5 +494,46 @@ private class FaultListAdapter(
     override fun onBindViewHolder(h: VH, pos: Int) {
         h.tvFault.text = faults[pos]
         h.btnPass.setOnClickListener { onPass(pos) }
+    }
+}
+
+/** 时间线适配器：显示测试流程+故障记录 */
+private class TimelineAdapter(
+    private val data: List<Pair<DebugLog, List<FaultRecord>>>
+) : RecyclerView.Adapter<TimelineAdapter.VH>() {
+
+    class VH(v: View) : RecyclerView.ViewHolder(v) {
+        val tvLog: TextView = v.findViewById(R.id.tv_timeline_log)
+        val tvFaults: TextView = v.findViewById(R.id.tv_timeline_faults)
+        val tvPass: TextView = v.findViewById(R.id.tv_timeline_pass)
+    }
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
+        val v = LayoutInflater.from(parent.context).inflate(R.layout.item_timeline, parent, false)
+        return VH(v)
+    }
+
+    override fun getItemCount() = data.size
+
+    override fun onBindViewHolder(h: VH, pos: Int) {
+        val (log, faults) = data[pos]
+        val ctx = h.itemView.context
+        h.tvLog.text = ctx.getString(R.string.timeline_log_fmt, DT.full(log.createdAt), log.tester)
+
+        if (faults.isNotEmpty()) {
+            h.tvFaults.visibility = View.VISIBLE
+            val faultText = faults.joinToString("\n") { f ->
+                val status = if (f.status == FaultRecord.STATUS_PENDING)
+                    ctx.getString(R.string.timeline_fault_pending)
+                else ctx.getString(R.string.timeline_fault_resolved)
+                ctx.getString(R.string.timeline_fault_fmt, f.symptom) + "[$status]"
+            }
+            h.tvFaults.text = faultText
+            h.tvPass.visibility = View.GONE
+        } else {
+            h.tvFaults.visibility = View.GONE
+            h.tvPass.visibility = View.VISIBLE
+            h.tvPass.text = ctx.getString(R.string.timeline_pass)
+        }
     }
 }

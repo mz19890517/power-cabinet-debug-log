@@ -203,6 +203,14 @@
     <string name="fault_pass_ok">已通过：%1$s</string>
     <string name="fault_unpass_ok">已驳回：%1$s</string>
     <string name="fault_add_ok">已添加 %1$d 条故障</string>
+    <string name="timeline_title">测试流程 · %1$s</string>
+    <string name="timeline_empty">暂无历史记录</string>
+    <string name="timeline_log_fmt">%1$s · 测试人员：%2$s</string>
+    <string name="timeline_fault_fmt">  · 故障：%1$s</string>
+    <string name="timeline_pass">  ✓ 通过</string>
+    <string name="timeline_fault_pending">待处理</string>
+    <string name="timeline_fault_resolved">已解决</string>
+    <string name="reject_menu_title">驳回测试</string>
     <string name="progress_line_fmt">本柜测试进度：待测 %1$d · 未通过 %2$d · 已通过 %3$d</string>
     <string name="progress_detail_title">本柜预选测试项明细</string>
     <string name="log_marked_toast">已保存 ✓ 并自动标记 %1$d 项预选项目为"已通过"</string>
