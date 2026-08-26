@@ -284,22 +284,28 @@
     <string name="short_name_saved">已保存精简名：%1$s</string>
     <string name="short_name_cleared">已清除精简名</string>
 
-    <!-- v2.16：拖动排序 / 名称模式 / 网格列数 / 排列方式 -->
-    <string name="action_drag_sort">拖动排序</string>
-    <string name="drag_sort_active">拖动排序中，拖动柜子调整顺序，点右上角 ✓ 完成</string>
-    <string name="drag_sort_done">排序已保存</string>
+    <!-- v2.17：名称模式 / 排列方式 / 行编辑器 -->
     <string name="action_name_mode_full">显示全名</string>
     <string name="action_name_mode_short">显示精简名</string>
-    <string name="action_grid_span">每行列数</string>
     <string name="action_sort">排列方式</string>
-    <string name="sort_custom">自定义（拖动排序）</string>
     <string name="sort_name_asc">柜名升序</string>
     <string name="sort_name_desc">柜名降序</string>
     <string name="sort_fault_desc">待处理故障降序</string>
     <string name="sort_test_desc">待测数量降序</string>
-    <string name="grid_span_fmt">%1$d列</string>
     <string name="grid_label_pending_short">待</string>
     <string name="grid_label_faults_short">故</string>
+
+    <!-- 行编辑器对话框 -->
+    <string name="row_editor_title">排列方式</string>
+    <string name="row_editor_auto_sort">自动排序</string>
+    <string name="sort_custom_row">自定义行分配</string>
+    <string name="row_editor_hint">点击行号向该行添加柜子（每行最多4个，不足4个居中显示）</string>
+    <string name="row_number_fmt">第%1$d行</string>
+    <string name="row_add_to">添加柜子到此行</string>
+    <string name="row_remove_from">移除</string>
+    <string name="row_add_cabinet_fmt">添加到第%1$d行</string>
+    <string name="row_max_reached">每行最多4个柜子</string>
+    <string name="row_all_assigned">所有柜子已分配到此行</string>
 
     <!-- 删除防呆（v2.16） -->
     <string name="safeguard_section_title">安全设置</string>

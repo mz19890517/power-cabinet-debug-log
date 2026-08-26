@@ -14,13 +14,13 @@ import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
-import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.fieldlog.powerdebug.App
@@ -54,13 +54,16 @@ class ProjectDetailActivity : AppCompatActivity() {
         private const val KEY_GRID_VIEW = "grid_view"
         private const val KEY_NAME_MODE = "name_mode"
         private const val KEY_SORT_MODE = "sort_mode"
+        private const val KEY_ROW_ASSIGNMENTS = "row_assignments"
         private const val TYPE_LIST = 0
         private const val TYPE_GRID = 1
+        private const val TYPE_GRID_GROUPED = 2
         private const val SORT_CUSTOM = 0
         private const val SORT_NAME_ASC = 1
         private const val SORT_NAME_DESC = 2
         private const val SORT_FAULT_DESC = 3
         private const val SORT_TEST_DESC = 4
+        private const val MAX_PER_ROW = 4
 
         fun intent(ctx: Context, projectId: String) =
             Intent(ctx, ProjectDetailActivity::class.java).putExtra(KEY_PROJECT_ID, projectId)
@@ -74,7 +77,10 @@ class ProjectDetailActivity : AppCompatActivity() {
     private var isGridLayout = false
     private var isShortNameMode = false
     private var sortMode = SORT_CUSTOM
-    private var isDragMode = false
+
+    // 行分配数据：行号(1开始) → 该行的柜子ID列表
+    // 从 SharedPreferences 读取 JSON 字符串，格式：{"1":["id1","id2"],"2":["id3"]}
+    private var rowAssignments: MutableMap<Int, MutableList<String>> = mutableMapOf()
 
     /** 单柜日志导出（长按菜单入口） */
     private var exportInstanceId = ""
@@ -82,8 +88,6 @@ class ProjectDetailActivity : AppCompatActivity() {
     private val exportLauncher = registerForActivityResult(
         ActivityResultContracts.CreateDocument(XLSX_MIME)
     ) { uri -> uri?.let { doExportInstance(it) } }
-
-    private var itemTouchHelper: ItemTouchHelper? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -98,56 +102,36 @@ class ProjectDetailActivity : AppCompatActivity() {
         isGridLayout = prefs.getBoolean(KEY_GRID_VIEW, false)
         isShortNameMode = prefs.getBoolean(KEY_NAME_MODE, false)
         sortMode = prefs.getInt(KEY_SORT_MODE, SORT_CUSTOM)
+        loadRowAssignments(prefs)
 
         lifecycleScope.launch {
             typeNames = App.repo.allTypes().associate { it.id to it.name }
         }
 
         adapter = InstanceAdapter(
-            onClick = { if (!isDragMode) routeInstanceClick(it.instance) },
-            onLongClick = { if (!isDragMode) showInstanceMenu(it.instance) }
+            onClick = { routeInstanceClick(it.instance) },
+            onLongClick = { showInstanceMenu(it.instance) }
         )
         val rv = findViewById<RecyclerView>(R.id.rv_instances)
-        rv.layoutManager = if (isGridLayout) GridLayoutManager(this, 4) else LinearLayoutManager(this)
-        rv.adapter = adapter
-
-        // 拖动排序
-        val dragCallback = object : ItemTouchHelper.SimpleCallback(
-            ItemTouchHelper.UP or ItemTouchHelper.DOWN or ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT, 0
-        ) {
-            override fun onMove(
-                recyclerView: RecyclerView,
-                viewHolder: RecyclerView.ViewHolder,
-                target: RecyclerView.ViewHolder
-            ): Boolean {
-                val from = viewHolder.adapterPosition
-                val to = target.adapterPosition
-                if (from == RecyclerView.NO_POSITION || to == RecyclerView.NO_POSITION) return false
-                if (from == to) return false
-                // 只交换两个位置，不全量刷新
-                val list = adapter.getData().toMutableList()
-                val item = list.removeAt(from)
-                list.add(to, item)
-                adapter.swapItems(from, to)
-                SyncLog.append(this@ProjectDetailActivity, "拖动 move from=$from to=$to size=${list.size}")
-                return true
+        if (isGridLayout) {
+            val glm = GridLayoutManager(this, 4)
+            glm.spanSizeLookup = object : GridLayoutManager.SpanSizeLookup() {
+                override fun getSpanSize(position: Int): Int {
+                    return if (adapter.isGroupedMode) 4 else 1
+                }
             }
-            override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {}
-            override fun clearView(recyclerView: RecyclerView, viewHolder: RecyclerView.ViewHolder) {
-                super.clearView(recyclerView, viewHolder)
-                SyncLog.append(this@ProjectDetailActivity, "拖动 clearView, 保存排序")
-                saveDragOrder()
-            }
+            rv.layoutManager = glm
+        } else {
+            rv.layoutManager = LinearLayoutManager(this)
         }
-        itemTouchHelper = ItemTouchHelper(dragCallback)
-        if (isDragMode) itemTouchHelper?.attachToRecyclerView(rv)
+        rv.adapter = adapter
 
         findViewById<View>(R.id.btn_add_instance).setOnClickListener { showInstanceDialog(null) }
 
         lifecycleScope.launch {
             App.db.instanceDao().watchByProjectWithStatsAsFlow(projectId).collect { list ->
                 latestRows = list
-                submitSorted(list)
+                submitData()
                 findViewById<TextView>(R.id.tv_empty_instances).visibility =
                     if (list.isEmpty()) View.VISIBLE else View.GONE
                 refreshHeader(list)
@@ -161,16 +145,46 @@ class ProjectDetailActivity : AppCompatActivity() {
         }
     }
 
-    /** 按当前排列方式排序后提交 */
-    private fun submitSorted(list: List<InstanceStatusRow>) {
-        val sorted = when (sortMode) {
-            SORT_NAME_ASC -> list.sortedBy { it.instance.name }
-            SORT_NAME_DESC -> list.sortedByDescending { it.instance.name }
-            SORT_FAULT_DESC -> list.sortedByDescending { it.pendingFaults }
-            SORT_TEST_DESC -> list.sortedByDescending { it.pendingTests }
-            else -> list.sortedBy { if (it.instance.sortOrder == 0) Int.MAX_VALUE else it.instance.sortOrder }
+    /** 根据当前排列方式提交数据 */
+    private fun submitData() {
+        if (sortMode == SORT_CUSTOM && rowAssignments.isNotEmpty()) {
+            // 自定义模式：按行分配显示
+            val grouped = buildGroupedList()
+            adapter.submitGrouped(grouped)
+        } else {
+            // 自动排序模式：扁平列表
+            val sorted = when (sortMode) {
+                SORT_NAME_ASC -> latestRows.sortedBy { it.instance.name }
+                SORT_NAME_DESC -> latestRows.sortedByDescending { it.instance.name }
+                SORT_FAULT_DESC -> latestRows.sortedByDescending { it.pendingFaults }
+                SORT_TEST_DESC -> latestRows.sortedByDescending { it.pendingTests }
+                else -> latestRows.sortedBy { it.instance.name }
+            }
+            adapter.submitFlat(sorted)
         }
-        adapter.submit(sorted)
+    }
+
+    /** 根据 rowAssignments 构建行分组列表，每行最多 MAX_PER_ROW 个 */
+    private fun buildGroupedList(): List<List<InstanceStatusRow>> {
+        val allRows = mutableListOf<List<InstanceStatusRow>>()
+        val assignedIds = mutableSetOf<String>()
+
+        // 先输出已分配的行
+        val sortedRowNums = rowAssignments.keys.sorted()
+        for (rowNum in sortedRowNums) {
+            val ids = rowAssignments[rowNum] ?: continue
+            val items = ids.mapNotNull { id -> latestRows.find { it.instance.id == id } }
+            if (items.isNotEmpty()) {
+                allRows.add(items.take(MAX_PER_ROW))
+                items.take(MAX_PER_ROW).forEach { assignedIds.add(it.instance.id) }
+            }
+        }
+
+        // 未分配的柜子追加到新行
+        val unassigned = latestRows.filter { it.instance.id !in assignedIds }
+        unassigned.chunked(MAX_PER_ROW).forEach { allRows.add(it) }
+
+        return allRows
     }
 
     private fun refreshHeader(rows: List<InstanceStatusRow>) {
@@ -201,48 +215,24 @@ class ProjectDetailActivity : AppCompatActivity() {
 
     private fun updateMenuAppearance(menu: Menu) {
         val toggleItem = menu.findItem(R.id.action_toggle_view)
-        val dragItem = menu.findItem(R.id.action_drag_sort)
         val nameModeItem = menu.findItem(R.id.action_name_mode)
         val sortItem = menu.findItem(R.id.action_sort)
         val editItem = menu.findItem(R.id.action_edit_project)
         val deleteItem = menu.findItem(R.id.action_delete_project)
 
-        if (isDragMode) {
-            toggleItem?.isVisible = false
-            toggleItem?.setIcon(R.drawable.ic_list_view)
-            dragItem?.setTitle(R.string.drag_sort_done)
-            nameModeItem?.isVisible = false
-            sortItem?.isVisible = false
-            editItem?.isVisible = false
-            deleteItem?.isVisible = false
-        } else {
-            toggleItem?.isVisible = true
-            toggleItem?.setIcon(if (isGridLayout) R.drawable.ic_list_view else R.drawable.ic_grid_view)
-            dragItem?.setTitle(R.string.action_drag_sort)
-            nameModeItem?.isVisible = true
-            nameModeItem?.setTitle(if (isShortNameMode) R.string.action_name_mode_full else R.string.action_name_mode_short)
-            sortItem?.isVisible = true
-            editItem?.isVisible = true
-            deleteItem?.isVisible = true
-        }
-
-        // 排列方式 check 状态
-        menu.findItem(R.id.action_sort_custom)?.isChecked = sortMode == SORT_CUSTOM
-        menu.findItem(R.id.action_sort_name_asc)?.isChecked = sortMode == SORT_NAME_ASC
-        menu.findItem(R.id.action_sort_name_desc)?.isChecked = sortMode == SORT_NAME_DESC
-        menu.findItem(R.id.action_sort_fault_desc)?.isChecked = sortMode == SORT_FAULT_DESC
-        menu.findItem(R.id.action_sort_test_desc)?.isChecked = sortMode == SORT_TEST_DESC
+        toggleItem?.isVisible = true
+        toggleItem?.setIcon(if (isGridLayout) R.drawable.ic_list_view else R.drawable.ic_grid_view)
+        nameModeItem?.isVisible = true
+        nameModeItem?.setTitle(if (isShortNameMode) R.string.action_name_mode_full else R.string.action_name_mode_short)
+        sortItem?.isVisible = true
+        editItem?.isVisible = true
+        deleteItem?.isVisible = true
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean = when (item.itemId) {
         R.id.action_toggle_view -> { toggleView(); true }
-        R.id.action_drag_sort -> { toggleDragMode(); true }
         R.id.action_name_mode -> { toggleNameMode(); true }
-        R.id.action_sort_custom -> { setSortMode(SORT_CUSTOM); true }
-        R.id.action_sort_name_asc -> { setSortMode(SORT_NAME_ASC); true }
-        R.id.action_sort_name_desc -> { setSortMode(SORT_NAME_DESC); true }
-        R.id.action_sort_fault_desc -> { setSortMode(SORT_FAULT_DESC); true }
-        R.id.action_sort_test_desc -> { setSortMode(SORT_TEST_DESC); true }
+        R.id.action_sort -> { showRowEditorDialog(); true }
         R.id.action_edit_project -> { project?.let { editProject(it) }; true }
         R.id.action_delete_project -> { deleteProject(); true }
         else -> super.onOptionsItemSelected(item)
@@ -252,38 +242,19 @@ class ProjectDetailActivity : AppCompatActivity() {
         isGridLayout = !isGridLayout
         getSharedPreferences(PREF_NAME, MODE_PRIVATE).edit().putBoolean(KEY_GRID_VIEW, isGridLayout).apply()
         val rv = findViewById<RecyclerView>(R.id.rv_instances)
-        rv.layoutManager = if (isGridLayout) GridLayoutManager(this, 4) else LinearLayoutManager(this)
+        if (isGridLayout) {
+            val glm = GridLayoutManager(this, 4)
+            glm.spanSizeLookup = object : GridLayoutManager.SpanSizeLookup() {
+                override fun getSpanSize(position: Int): Int {
+                    return if (adapter.isGroupedMode) 4 else 1
+                }
+            }
+            rv.layoutManager = glm
+        } else {
+            rv.layoutManager = LinearLayoutManager(this)
+        }
         adapter.notifyDataSetChanged()
         invalidateOptionsMenu()
-    }
-
-    private fun toggleDragMode() {
-        isDragMode = !isDragMode
-        val rv = findViewById<RecyclerView>(R.id.rv_instances)
-        if (isDragMode) {
-            // 进入拖动模式：禁用自定义排序，让数据顺序=显示顺序
-            adapter.submit(latestRows.sortedBy { if (it.instance.sortOrder == 0) Int.MAX_VALUE else it.instance.sortOrder })
-            itemTouchHelper?.attachToRecyclerView(rv)
-            Toast.makeText(this, R.string.drag_sort_active, Toast.LENGTH_LONG).show()
-            SyncLog.append(this, "进入拖动模式, 柜子数=${latestRows.size}")
-        } else {
-            itemTouchHelper?.attachToRecyclerView(null)
-            saveDragOrder()
-            // 退出拖动模式：恢复排序显示
-            submitSorted(latestRows)
-            Toast.makeText(this, R.string.drag_sort_done, Toast.LENGTH_SHORT).show()
-            SyncLog.append(this, "退出拖动模式")
-        }
-        invalidateOptionsMenu()
-    }
-
-    private fun saveDragOrder() {
-        val list = adapter.getData()
-        lifecycleScope.launch {
-            list.forEachIndexed { index, row ->
-                App.db.instanceDao().updateSortOrder(row.instance.id, index + 1)
-            }
-        }
     }
 
     private fun toggleNameMode() {
@@ -296,83 +267,237 @@ class ProjectDetailActivity : AppCompatActivity() {
     private fun setSortMode(mode: Int) {
         sortMode = mode
         getSharedPreferences(PREF_NAME, MODE_PRIVATE).edit().putInt(KEY_SORT_MODE, mode).apply()
-        submitSorted(latestRows)
+        submitData()
         invalidateOptionsMenu()
     }
 
-    private fun showShortNameDialog(inst: CabinetInstance) {
-        val et = EditText(this).apply {
-            setText(inst.shortName)
-            hint = getString(R.string.short_name_hint)
-            setPadding(48, 32, 48, 16)
-        }
-        AlertDialog.Builder(this)
-            .setTitle(R.string.short_name_title)
-            .setView(et)
-            .setPositiveButton(R.string.save) { _, _ ->
-                val newName = et.text?.toString()?.trim().orEmpty()
-                lifecycleScope.launch {
-                    App.repo.saveInstance(inst.copy(shortName = newName, updatedAt = System.currentTimeMillis()))
-                    if (newName.isNotEmpty()) {
-                        Toast.makeText(this@ProjectDetailActivity, getString(R.string.short_name_saved, newName), Toast.LENGTH_SHORT).show()
-                    } else {
-                        Toast.makeText(this@ProjectDetailActivity, R.string.short_name_cleared, Toast.LENGTH_SHORT).show()
-                    }
-                }
-            }
-            .setNegativeButton(R.string.cancel, null)
-            .show()
-    }
+    // ---------- 行编辑器对话框 ----------
 
-    private fun editProject(p: Project) {
-        val dlgView = layoutInflater.inflate(R.layout.dialog_input_multiline, null)
-        val prompt = dlgView.findViewById<TextView>(R.id.tv_prompt)
-        val input = dlgView.findViewById<EditText>(R.id.et_input)
-        input.minLines = 3
-        prompt.text = getString(R.string.project_name) + "\n" + getString(R.string.project_code) + "\n" + getString(R.string.project_remark)
-        input.setText("${p.name}\n${p.code}\n${p.remark}")
+    private fun showRowEditorDialog() {
+        val dlgView = layoutInflater.inflate(R.layout.dialog_row_editor, null)
+        val sortGroup = dlgView.findViewById<android.widget.RadioGroup>(R.id.rg_sort_options)
+        val rowContainer = dlgView.findViewById<LinearLayout>(R.id.row_container)
+        val tvRowHint = dlgView.findViewById<TextView>(R.id.tv_row_hint)
+
+        // 设置当前排序选项
+        when (sortMode) {
+            SORT_NAME_ASC -> sortGroup.check(R.id.rb_sort_name_asc)
+            SORT_NAME_DESC -> sortGroup.check(R.id.rb_sort_name_desc)
+            SORT_FAULT_DESC -> sortGroup.check(R.id.rb_sort_fault_desc)
+            SORT_TEST_DESC -> sortGroup.check(R.id.rb_sort_test_desc)
+            else -> sortGroup.check(R.id.rb_sort_custom)
+        }
+
+        // 显示行分配区域
+        val isCustom = sortMode == SORT_CUSTOM
+        rowContainer.visibility = if (isCustom) View.VISIBLE else View.GONE
+        tvRowHint.visibility = if (isCustom) View.VISIBLE else View.GONE
+
+        if (isCustom) {
+            refreshRowEditorContent(rowContainer)
+        }
+
+        // 切换排序选项时刷新行区域
+        sortGroup.setOnCheckedChangeListener { _, checkedId ->
+            val newCustom = checkedId == R.id.rb_sort_custom
+            rowContainer.visibility = if (newCustom) View.VISIBLE else View.GONE
+            tvRowHint.visibility = if (newCustom) View.VISIBLE else View.GONE
+            if (newCustom) refreshRowEditorContent(rowContainer)
+        }
+
         AlertDialog.Builder(this)
-            .setTitle(R.string.edit_project)
+            .setTitle(R.string.row_editor_title)
             .setView(dlgView)
             .setPositiveButton(R.string.save) { _, _ ->
-                val lines = input.text?.toString()?.lines().orEmpty()
-                val name = lines.getOrNull(0)?.trim().orEmpty()
-                if (name.isEmpty()) {
-                    Toast.makeText(this, R.string.name_required, Toast.LENGTH_SHORT).show()
-                    return@setPositiveButton
+                // 保存排序模式
+                val newMode = when (sortGroup.checkedRadioButtonId) {
+                    R.id.rb_sort_name_asc -> SORT_NAME_ASC
+                    R.id.rb_sort_name_desc -> SORT_NAME_DESC
+                    R.id.rb_sort_fault_desc -> SORT_FAULT_DESC
+                    R.id.rb_sort_test_desc -> SORT_TEST_DESC
+                    else -> SORT_CUSTOM
                 }
-                lifecycleScope.launch {
-                    App.repo.saveProject(
-                        p.copy(
-                            name = name,
-                            code = lines.getOrNull(1)?.trim().orEmpty(),
-                            remark = lines.drop(2).joinToString("\n").trim()
-                        )
-                    )
-                    this@ProjectDetailActivity.project = App.repo.getProject(projectId)
-                    supportActionBar?.title = this@ProjectDetailActivity.project?.name
+                setSortMode(newMode)
+
+                // 如果是自定义模式，保存行分配
+                if (newMode == SORT_CUSTOM) {
+                    saveRowAssignmentsFromDialog(rowContainer)
                 }
             }
             .setNegativeButton(R.string.cancel, null)
             .show()
     }
 
-    private fun deleteProject() {
-        val p = project ?: return
+    /** 刷新行编辑器对话框内的行内容 */
+    private fun refreshRowEditorContent(container: LinearLayout) {
+        container.removeAllViews()
+        val grouped = buildGroupedList()
+
+        for ((index, row) in grouped.withIndex()) {
+            val rowNum = index + 1
+            val rowView = layoutInflater.inflate(R.layout.dialog_row_editor_row, container, false)
+            val tvRowNum = rowView.findViewById<TextView>(R.id.tv_row_number)
+            val rowItemsContainer = rowView.findViewById<LinearLayout>(R.id.row_items_container)
+            val btnAddToRow = rowView.findViewById<View>(R.id.btn_add_to_row)
+
+            tvRowNum.text = getString(R.string.row_number_fmt, rowNum)
+
+            // 显示该行的柜子
+            for (item in row) {
+                val chip = layoutInflater.inflate(R.layout.dialog_row_editor_chip, rowItemsContainer, false)
+                val tvChipName = chip.findViewById<TextView>(R.id.tv_chip_name)
+                val btnRemove = chip.findViewById<View>(R.id.btn_chip_remove)
+
+                tvChipName.text = if (isShortNameMode) {
+                    item.instance.shortName.ifBlank { item.instance.name }
+                } else {
+                    item.instance.name
+                }
+
+                btnRemove.setOnClickListener {
+                    rowItemsContainer.removeView(chip)
+                }
+
+                rowItemsContainer.addView(chip)
+            }
+
+            // 点击行号添加柜子
+            btnAddToRow.setOnClickListener {
+                showAddToRowDialog(rowNum, rowItemsContainer)
+            }
+
+            container.addView(rowView)
+        }
+    }
+
+    /** 点击行号时弹出选择柜子对话框 */
+    private fun showAddToRowDialog(rowNum: Int, targetContainer: LinearLayout) {
+        // 获取当前行已有的柜子ID
+        val existingIds = mutableSetOf<String>()
+        for (i in 0 until targetContainer.childCount) {
+            val chip = targetContainer.getChildAt(i)
+            val tvName = chip.findViewById<TextView>(R.id.tv_chip_name) ?: continue
+            // 通过名称反查ID（简单方法，假设名称唯一）
+            val match = latestRows.find { row ->
+                val displayName = if (isShortNameMode) {
+                    row.instance.shortName.ifBlank { row.instance.name }
+                } else {
+                    row.instance.name
+                }
+                displayName == tvName.text.toString()
+            }
+            match?.let { existingIds.add(it.instance.id) }
+        }
+
+        // 过滤出不在本行的柜子
+        val available = latestRows.filter { it.instance.id !in existingIds }
+        if (available.isEmpty()) {
+            Toast.makeText(this, R.string.row_all_assigned, Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val names = available.map { row ->
+            if (isShortNameMode) {
+                row.instance.shortName.ifBlank { row.instance.name }
+            } else {
+                row.instance.name
+            }
+        }.toTypedArray()
+
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.row_add_cabinet_fmt, rowNum))
+            .setItems(names) { _, which ->
+                val selected = available[which]
+                if (targetContainer.childCount >= MAX_PER_ROW) {
+                    Toast.makeText(this, R.string.row_max_reached, Toast.LENGTH_SHORT).show()
+                    return@setItems
+                }
+                val chip = layoutInflater.inflate(R.layout.dialog_row_editor_chip, targetContainer, false)
+                val tvChipName = chip.findViewById<TextView>(R.id.tv_chip_name)
+                val btnRemove = chip.findViewById<View>(R.id.btn_chip_remove)
+                tvChipName.text = names[which]
+                btnRemove.setOnClickListener { targetContainer.removeView(chip) }
+                targetContainer.addView(chip)
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    /** 从对话框中读取行分配并保存 */
+    private fun saveRowAssignmentsFromDialog(container: LinearLayout) {
+        val newAssignments = mutableMapOf<Int, MutableList<String>>()
+        for (i in 0 until container.childCount) {
+            val rowView = container.getChildAt(i)
+            val rowNum = (i + 1)
+            val rowItemsContainer = rowView.findViewById<LinearLayout>(R.id.row_items_container) ?: continue
+
+            val ids = mutableListOf<String>()
+            for (j in 0 until rowItemsContainer.childCount) {
+                val chip = rowItemsContainer.getChildAt(j)
+                val tvName = chip.findViewById<TextView>(R.id.tv_chip_name) ?: continue
+                val match = latestRows.find { row ->
+                    val displayName = if (isShortNameMode) {
+                        row.instance.shortName.ifBlank { row.instance.name }
+                    } else {
+                        row.instance.name
+                    }
+                    displayName == tvName.text.toString()
+                }
+                match?.let { ids.add(it.instance.id) }
+            }
+            if (ids.isNotEmpty()) {
+                newAssignments[rowNum] = ids
+            }
+        }
+        rowAssignments = newAssignments
+        saveRowAssignments()
+
+        // 更新 sortOrder 字段
         lifecycleScope.launch {
-            val cabinets = App.db.instanceDao().byProjectOnce(p.id).size
-            DeleteSafeguard.confirmDelete(
-                context = this@ProjectDetailActivity,
-                title = R.string.delete,
-                message = getString(R.string.warn_del_project, p.name, cabinets),
-                typeName = "项目"
-            ) {
-                lifecycleScope.launch {
-                    App.repo.deleteProject(p.id)
-                    finish()
+            var order = 1
+            for ((_, ids) in newAssignments.toSortedMap()) {
+                for (id in ids) {
+                    App.db.instanceDao().updateSortOrder(id, order++)
+                }
+            }
+            // 未分配的柜子排在最后
+            val assignedIds = newAssignments.values.flatten().toSet()
+            for (row in latestRows) {
+                if (row.instance.id !in assignedIds) {
+                    App.db.instanceDao().updateSortOrder(row.instance.id, order++)
                 }
             }
         }
+    }
+
+    private fun loadRowAssignments(prefs: android.content.SharedPreferences) {
+        val json = prefs.getString(KEY_ROW_ASSIGNMENTS, null) ?: return
+        try {
+            val obj = org.json.JSONObject(json)
+            for (key in obj.keys()) {
+                val rowNum = key.toIntOrNull() ?: continue
+                val arr = obj.getJSONArray(key)
+                val ids = mutableListOf<String>()
+                for (i in 0 until arr.length()) {
+                    ids.add(arr.getString(i))
+                }
+                rowAssignments[rowNum] = ids
+            }
+        } catch (_: Exception) {
+            rowAssignments.clear()
+        }
+    }
+
+    private fun saveRowAssignments() {
+        val obj = org.json.JSONObject()
+        for ((rowNum, ids) in rowAssignments) {
+            val arr = org.json.JSONArray()
+            ids.forEach { arr.put(it) }
+            obj.put(rowNum.toString(), arr)
+        }
+        getSharedPreferences(PREF_NAME, MODE_PRIVATE).edit()
+            .putString(KEY_ROW_ASSIGNMENTS, obj.toString())
+            .apply()
     }
 
     // ---------- 柜子实例 ----------
@@ -665,6 +790,81 @@ class ProjectDetailActivity : AppCompatActivity() {
         }
     }
 
+    private fun showShortNameDialog(inst: CabinetInstance) {
+        val et = EditText(this).apply {
+            setText(inst.shortName)
+            hint = getString(R.string.short_name_hint)
+            setPadding(48, 32, 48, 16)
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.short_name_title)
+            .setView(et)
+            .setPositiveButton(R.string.save) { _, _ ->
+                val newName = et.text?.toString()?.trim().orEmpty()
+                lifecycleScope.launch {
+                    App.repo.saveInstance(inst.copy(shortName = newName, updatedAt = System.currentTimeMillis()))
+                    if (newName.isNotEmpty()) {
+                        Toast.makeText(this@ProjectDetailActivity, getString(R.string.short_name_saved, newName), Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(this@ProjectDetailActivity, R.string.short_name_cleared, Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun editProject(p: Project) {
+        val dlgView = layoutInflater.inflate(R.layout.dialog_input_multiline, null)
+        val prompt = dlgView.findViewById<TextView>(R.id.tv_prompt)
+        val input = dlgView.findViewById<EditText>(R.id.et_input)
+        input.minLines = 3
+        prompt.text = getString(R.string.project_name) + "\n" + getString(R.string.project_code) + "\n" + getString(R.string.project_remark)
+        input.setText("${p.name}\n${p.code}\n${p.remark}")
+        AlertDialog.Builder(this)
+            .setTitle(R.string.edit_project)
+            .setView(dlgView)
+            .setPositiveButton(R.string.save) { _, _ ->
+                val lines = input.text?.toString()?.lines().orEmpty()
+                val name = lines.getOrNull(0)?.trim().orEmpty()
+                if (name.isEmpty()) {
+                    Toast.makeText(this, R.string.name_required, Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                lifecycleScope.launch {
+                    App.repo.saveProject(
+                        p.copy(
+                            name = name,
+                            code = lines.getOrNull(1)?.trim().orEmpty(),
+                            remark = lines.drop(2).joinToString("\n").trim()
+                        )
+                    )
+                    this@ProjectDetailActivity.project = App.repo.getProject(projectId)
+                    supportActionBar?.title = this@ProjectDetailActivity.project?.name
+                }
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun deleteProject() {
+        val p = project ?: return
+        lifecycleScope.launch {
+            val cabinets = App.db.instanceDao().byProjectOnce(p.id).size
+            DeleteSafeguard.confirmDelete(
+                context = this@ProjectDetailActivity,
+                title = R.string.delete,
+                message = getString(R.string.warn_del_project, p.name, cabinets),
+                typeName = "项目"
+            ) {
+                lifecycleScope.launch {
+                    App.repo.deleteProject(p.id)
+                    finish()
+                }
+            }
+        }
+    }
+
     // ---------- 适配器 ----------
 
     private inner class InstanceAdapter(
@@ -672,47 +872,92 @@ class ProjectDetailActivity : AppCompatActivity() {
         private val onLongClick: (InstanceStatusRow) -> Unit
     ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
-        private val data = mutableListOf<InstanceStatusRow>()
+        private val flatData = mutableListOf<InstanceStatusRow>()
+        private val groupedData = mutableListOf<List<InstanceStatusRow>>()
+        var isGroupedMode = false
+            private set
 
-        fun submit(list: List<InstanceStatusRow>) {
-            data.clear(); data.addAll(list); notifyDataSetChanged()
+        /** 扁平模式：自动排序时使用 */
+        fun submitFlat(list: List<InstanceStatusRow>) {
+            isGroupedMode = false
+            flatData.clear(); flatData.addAll(list)
+            groupedData.clear()
+            notifyDataSetChanged()
         }
 
-        /** 拖动时仅交换两个位置，不全量刷新 */
-        fun swapItems(from: Int, to: Int) {
-            if (from < 0 || from >= data.size || to < 0 || to >= data.size) return
-            val item = data.removeAt(from)
-            data.add(to, item)
-            notifyItemMoved(from, to)
+        /** 分组模式：自定义行分配时使用 */
+        fun submitGrouped(rows: List<List<InstanceStatusRow>>) {
+            isGroupedMode = true
+            groupedData.clear(); groupedData.addAll(rows)
+            flatData.clear()
+            notifyDataSetChanged()
         }
 
-        fun getData(): List<InstanceStatusRow> = listOf(*data.toTypedArray())
-
-        override fun getItemViewType(position: Int) = if (isGridLayout) TYPE_GRID else TYPE_LIST
+        override fun getItemViewType(position: Int) = when {
+            isGridLayout && isGroupedMode -> TYPE_GRID_GROUPED
+            isGridLayout -> TYPE_GRID
+            else -> TYPE_LIST
+        }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
-            return if (viewType == TYPE_GRID) {
-                val binding = ItemSimpleCardGridBinding.inflate(layoutInflater, parent, false)
-                GridVH(binding)
-            } else {
-                val binding = ItemSimpleCardBinding.inflate(layoutInflater, parent, false)
-                ListVH(binding)
+            return when (viewType) {
+                TYPE_GRID -> {
+                    val binding = ItemSimpleCardGridBinding.inflate(layoutInflater, parent, false)
+                    GridVH(binding)
+                }
+                TYPE_GRID_GROUPED -> {
+                    val view = layoutInflater.inflate(R.layout.item_grid_row_grouped, parent, false)
+                    GridGroupedVH(view)
+                }
+                else -> {
+                    val binding = ItemSimpleCardBinding.inflate(layoutInflater, parent, false)
+                    ListVH(binding)
+                }
             }
         }
 
-        override fun getItemCount() = data.size
+        override fun getItemCount(): Int {
+            return if (isGroupedMode) {
+                if (isGridLayout) groupedData.size else groupedData.sumOf { it.size }
+            } else {
+                flatData.size
+            }
+        }
 
         override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
-            val row = data[position]
             when (holder) {
-                is ListVH -> bindListRow(holder, row)
-                is GridVH -> bindGridRow(holder, row)
+                is ListVH -> {
+                    val row = if (isGroupedMode) {
+                        // 列表模式：将分组数据展平，按位置查找
+                        var remaining = position
+                        var found: InstanceStatusRow? = null
+                        for (group in groupedData) {
+                            if (remaining < group.size) {
+                                found = group[remaining]
+                                break
+                            } else {
+                                remaining -= group.size
+                            }
+                        }
+                        found ?: flatData.getOrElse(position) { return }
+                    } else {
+                        flatData[position]
+                    }
+                    bindListRow(holder, row)
+                }
+                is GridVH -> {
+                    val row = flatData[position]
+                    bindGridRowFlat(holder, row)
+                }
+                is GridGroupedVH -> {
+                    val rowItems = groupedData[position]
+                    bindGridRowGrouped(holder, rowItems)
+                }
             }
         }
 
         private fun bindListRow(h: ListVH, row: InstanceStatusRow) {
             val item = row.instance
-            // 名称模式：精简名 or 全名
             val displayName = if (isShortNameMode) {
                 item.shortName.ifBlank { item.name }
             } else {
@@ -721,7 +966,6 @@ class ProjectDetailActivity : AppCompatActivity() {
             h.ib.tvName.text = displayName
 
             val base = buildString {
-                // 全名模式下若设置了精简名，追加显示
                 if (!isShortNameMode && item.shortName.isNotBlank()) {
                     append("精简名:${item.shortName} · ")
                 }
@@ -754,7 +998,37 @@ class ProjectDetailActivity : AppCompatActivity() {
             h.ib.root.setOnLongClickListener { onLongClick(row); true }
         }
 
-        private fun bindGridRow(h: GridVH, row: InstanceStatusRow) {
+        /** 网格模式：一行内多个柜子，居中显示 */
+        private fun bindGridRowGrouped(h: GridGroupedVH, rowItems: List<InstanceStatusRow>) {
+            val container = h.itemView as? ViewGroup ?: return
+            container.removeAllViews()
+
+            for (item in rowItems) {
+                val cardView = layoutInflater.inflate(R.layout.item_cabinet_card_in_row, container, false)
+                val tvName = cardView.findViewById<TextView>(R.id.tv_card_name)
+                val tvPending = cardView.findViewById<TextView>(R.id.tv_card_pending)
+                val tvFaults = cardView.findViewById<TextView>(R.id.tv_card_faults)
+
+                val displayName = if (isShortNameMode) {
+                    item.instance.shortName.ifBlank { item.instance.name }
+                } else {
+                    item.instance.name
+                }
+                tvName.text = displayName
+                tvPending.text = item.pendingTests.toString()
+                tvFaults.text = item.pendingFaults.toString()
+
+                cardView.setOnClickListener { onClick(item) }
+                cardView.setOnLongClickListener { onLongClick(item); true }
+
+                container.addView(cardView)
+            }
+
+            // 居中：行根布局用 android:gravity="center" 已在 XML 中设置
+        }
+
+        /** 网格模式：扁平列表每个item一行 */
+        private fun bindGridRowFlat(h: GridVH, row: InstanceStatusRow) {
             val item = row.instance
             val displayName = if (isShortNameMode) {
                 item.shortName.ifBlank { item.name }
@@ -766,7 +1040,6 @@ class ProjectDetailActivity : AppCompatActivity() {
             h.ib.tvGridPending.text = row.pendingTests.toString()
             h.ib.tvGridFaults.text = row.pendingFaults.toString()
 
-            // 固定4列：紧凑布局
             val res = resources
             h.ib.tvGridName.textSize = 12f
             h.ib.tvGridPending.textSize = 14f
@@ -780,5 +1053,6 @@ class ProjectDetailActivity : AppCompatActivity() {
 
         inner class ListVH(val ib: ItemSimpleCardBinding) : RecyclerView.ViewHolder(ib.root)
         inner class GridVH(val ib: ItemSimpleCardGridBinding) : RecyclerView.ViewHolder(ib.root)
+        inner class GridGroupedVH(itemView: View) : RecyclerView.ViewHolder(itemView)
     }
 }
