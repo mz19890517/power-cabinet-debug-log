@@ -115,7 +115,9 @@ class ProjectDetailActivity : AppCompatActivity() {
         rv.adapter = adapter
 
         // 拖动排序
-        val dragCallback = object : ItemTouchHelper.SimpleCallback(UP or DOWN or LEFT or RIGHT, 0) {
+        val dragCallback = object : ItemTouchHelper.SimpleCallback(
+            ItemTouchHelper.UP or ItemTouchHelper.DOWN or ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT, 0
+        ) {
             override fun onMove(
                 recyclerView: RecyclerView,
                 viewHolder: RecyclerView.ViewHolder,
