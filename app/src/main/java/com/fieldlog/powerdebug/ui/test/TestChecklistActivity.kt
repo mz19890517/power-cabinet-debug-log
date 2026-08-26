@@ -224,6 +224,11 @@ class TestChecklistActivity : AppCompatActivity() {
         }
         val faults = faultText.split("\n").filter { it.isNotBlank() }.toMutableList()
 
+        val rv = RecyclerView(this).apply {
+            layoutManager = LinearLayoutManager(this@TestChecklistActivity)
+            setPadding(48, 16, 48, 0)
+        }
+
         val faultAdapter = FaultListAdapter(faults) { position ->
             if (position in faults.indices) {
                 faults.removeAt(position)
@@ -239,12 +244,7 @@ class TestChecklistActivity : AppCompatActivity() {
                 Toast.makeText(this, getString(R.string.fault_pass_ok, item.content), Toast.LENGTH_SHORT).show()
             }
         }
-
-        val rv = RecyclerView(this).apply {
-            layoutManager = LinearLayoutManager(this@TestChecklistActivity)
-            this.adapter = faultAdapter
-            setPadding(48, 16, 48, 0)
-        }
+        rv.adapter = faultAdapter
 
         AlertDialog.Builder(this)
             .setTitle("故障列表 · ${item.content}")
