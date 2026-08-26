@@ -254,6 +254,7 @@ data class LogListItem(
     @Embedded val log: DebugLog,
     val projectName: String,
     val typeName: String,
+    val typeId: String,
     val instanceName: String,
     val deviceCode: String,
     val installer: String,

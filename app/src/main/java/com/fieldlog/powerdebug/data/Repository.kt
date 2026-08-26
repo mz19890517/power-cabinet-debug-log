@@ -562,6 +562,10 @@ class Repository(private val db: AppDatabase) {
         if (filter.testers.isNotEmpty()) {
             logs = logs.filter { it.log.tester in filter.testers }
         }
+        // 柜子类型筛选
+        if (filter.typeIds.isNotEmpty()) {
+            logs = logs.filter { it.typeId in filter.typeIds }
+        }
         // 日期范围筛选
         if (filter.dateFrom > 0) logs = logs.filter { it.log.createdAt >= filter.dateFrom }
         if (filter.dateTo > 0) logs = logs.filter { it.log.createdAt <= filter.dateTo }

@@ -223,7 +223,7 @@ interface InstanceDao {
 @Dao
 interface DebugLogDao {
     @Query(
-        """SELECT l.*, p.name AS projectName, t.name AS typeName, i.name AS instanceName,
+        """SELECT l.*, p.name AS projectName, t.name AS typeName, i.typeId AS typeId, i.name AS instanceName,
         i.deviceCode AS deviceCode, i.installer AS installer,
         (SELECT COUNT(*) FROM fault_records f WHERE f.logId = l.id AND f.status = 0) AS pendingCount,
         (SELECT COUNT(*) FROM fault_records f WHERE f.logId = l.id AND f.status = 1) AS resolvedCount
@@ -254,7 +254,7 @@ interface DebugLogDao {
     ): List<LogListItem>
 
     @Query(
-        """SELECT l.*, p.name AS projectName, t.name AS typeName, i.name AS instanceName,
+        """SELECT l.*, p.name AS projectName, t.name AS typeName, i.typeId AS typeId, i.name AS instanceName,
         i.deviceCode AS deviceCode, i.installer AS installer,
         (SELECT COUNT(*) FROM fault_records f WHERE f.logId = l.id AND f.status = 0) AS pendingCount,
         (SELECT COUNT(*) FROM fault_records f WHERE f.logId = l.id AND f.status = 1) AS resolvedCount
@@ -267,7 +267,7 @@ interface DebugLogDao {
     suspend fun getDetailOnce(id: String): LogListItem?
 
     @Query(
-        """SELECT l.*, p.name AS projectName, t.name AS typeName, i.name AS instanceName,
+        """SELECT l.*, p.name AS projectName, t.name AS typeName, i.typeId AS typeId, i.name AS instanceName,
         i.deviceCode AS deviceCode, i.installer AS installer,
         (SELECT COUNT(*) FROM fault_records f WHERE f.logId = l.id AND f.status = 0) AS pendingCount,
         (SELECT COUNT(*) FROM fault_records f WHERE f.logId = l.id AND f.status = 1) AS resolvedCount

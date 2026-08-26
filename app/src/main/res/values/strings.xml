@@ -266,6 +266,7 @@
     <string name="export_filter_has_fault">仅含故障</string>
     <string name="export_filter_pass_only">仅通过</string>
     <string name="export_filter_testers_label">测试人员</string>
+    <string name="export_filter_types_label">柜子类型</string>
     <string name="export_filter_testers_all">全部人员</string>
     <string name="export_filter_date_label">日期范围</string>
     <string name="export_filter_date_from_hint">起始日期（可选）</string>

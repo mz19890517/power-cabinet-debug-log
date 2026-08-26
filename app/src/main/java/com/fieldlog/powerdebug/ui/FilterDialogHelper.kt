@@ -38,6 +38,8 @@ object FilterDialogHelper {
         val rgStatus = view.findViewById<RadioGroup>(R.id.rgStatus)
         val tvTestersLabel = view.findViewById<TextView>(R.id.tvTestersLabel)
         val llTesters = view.findViewById<LinearLayout>(R.id.llTesters)
+        val tvTypesLabel = view.findViewById<TextView>(R.id.tvTypesLabel)
+        val llTypes = view.findViewById<LinearLayout>(R.id.llTypes)
         val etDateFrom = view.findViewById<EditText>(R.id.etDateFrom)
         val etDateTo = view.findViewById<EditText>(R.id.etDateTo)
         val tvLogColsLabel = view.findViewById<TextView>(R.id.tvLogColsLabel)
@@ -92,7 +94,7 @@ object FilterDialogHelper {
         etDateFrom.isFocusable = false
         etDateTo.isFocusable = false
 
-        // 异步加载测试员列表和列名
+        // 异步加载测试员列表、柜子类型和列名
         scope.launch {
             val testers = withContext(Dispatchers.IO) { App.repo.debuggers() }
             if (testers.isEmpty()) {
@@ -107,6 +109,23 @@ object FilterDialogHelper {
                         tag = d.name
                     }
                     llTesters.addView(cb)
+                }
+            }
+
+            // 柜子类型
+            val types = withContext(Dispatchers.IO) { App.repo.allTypes() }
+            if (types.isEmpty()) {
+                tvTypesLabel.visibility = View.GONE
+                llTypes.visibility = View.GONE
+            } else {
+                llTypes.removeAllViews()
+                types.forEach { t ->
+                    val cb = CheckBox(ctx).apply {
+                        text = t.name
+                        isChecked = initialFilter.typeIds.isEmpty() || t.id in initialFilter.typeIds
+                        tag = t.id
+                    }
+                    llTypes.addView(cb)
                 }
             }
 
@@ -153,6 +172,15 @@ object FilterDialogHelper {
                 val testers = if (selTesters.size == llTesters.childCount || llTesters.childCount == 0) emptySet()
                 else selTesters
 
+                // 收集柜子类型
+                val selTypes = mutableSetOf<String>()
+                for (i in 0 until llTypes.childCount) {
+                    val cb = llTypes.getChildAt(i) as? CheckBox
+                    if (cb?.isChecked == true) cb.tag?.let { selTypes.add(it as String) }
+                }
+                val typeIds = if (selTypes.size == llTypes.childCount || llTypes.childCount == 0) emptySet()
+                else selTypes
+
                 // 收集日期
                 val dateFrom = parseDate(etDateFrom.text?.toString()?.trim().orEmpty())
                 val dateTo = parseDate(etDateTo.text?.toString()?.trim().orEmpty())
@@ -177,6 +205,7 @@ object FilterDialogHelper {
                 onFilter(ExportFilter(
                     status = status,
                     testers = testers,
+                    typeIds = typeIds,
                     dateFrom = dateFrom,
                     dateTo = dateTo,
                     logColumns = logCols,
