@@ -7,6 +7,60 @@
         android:title="@string/grid_toggle_desc"
         app:showAsAction="always" />
     <item
+        android:id="@+id/action_drag_sort"
+        android:title="@string/action_drag_sort"
+        app:showAsAction="never" />
+    <item
+        android:id="@+id/action_name_mode"
+        android:title="@string/action_name_mode_full"
+        app:showAsAction="never" />
+    <item
+        android:id="@+id/action_grid_span"
+        android:title="@string/action_grid_span"
+        app:showAsAction="never">
+        <menu>
+            <item
+                android:id="@+id/action_grid_span_2"
+                android:title="@string/grid_span_fmt"
+                app:showAsAction="never" />
+            <item
+                android:id="@+id/action_grid_span_3"
+                android:title="@string/grid_span_fmt"
+                app:showAsAction="never" />
+            <item
+                android:id="@+id/action_grid_span_4"
+                android:title="@string/grid_span_fmt"
+                app:showAsAction="never" />
+        </menu>
+    </item>
+    <item
+        android:id="@+id/action_sort"
+        android:title="@string/action_sort"
+        app:showAsAction="never">
+        <menu>
+            <item
+                android:id="@+id/action_sort_custom"
+                android:title="@string/sort_custom"
+                app:showAsAction="never" />
+            <item
+                android:id="@+id/action_sort_name_asc"
+                android:title="@string/sort_name_asc"
+                app:showAsAction="never" />
+            <item
+                android:id="@+id/action_sort_name_desc"
+                android:title="@string/sort_name_desc"
+                app:showAsAction="never" />
+            <item
+                android:id="@+id/action_sort_fault_desc"
+                android:title="@string/sort_fault_desc"
+                app:showAsAction="never" />
+            <item
+                android:id="@+id/action_sort_test_desc"
+                android:title="@string/sort_test_desc"
+                app:showAsAction="never" />
+        </menu>
+    </item>
+    <item
         android:id="@+id/action_edit_project"
         android:title="@string/edit_project"
         app:showAsAction="never" />

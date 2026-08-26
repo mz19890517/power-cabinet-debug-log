@@ -207,15 +207,13 @@ class DeviceFragment : Fragment() {
     }
 
     private fun confirmDeleteProject(item: ProjectListItem) {
-        AlertDialog.Builder(requireContext())
-            .setTitle(R.string.delete)
-            .setIcon(android.R.drawable.ic_dialog_alert)
-            .setMessage(getString(R.string.warn_del_project, item.project.name, item.cabinetCount))
-            .setPositiveButton(R.string.confirm) { _, _ ->
-                viewLifecycleOwner.lifecycleScope.launch { App.repo.deleteProject(item.project.id) }
-            }
-            .setNegativeButton(R.string.cancel, null)
-            .show()
+        com.fieldlog.powerdebug.util.DeleteSafeguard.confirmDelete(
+            context = requireContext(),
+            title = R.string.delete,
+            message = getString(R.string.warn_del_project, item.project.name, item.cabinetCount)
+        ) {
+            viewLifecycleOwner.lifecycleScope.launch { App.repo.deleteProject(item.project.id) }
+        }
     }
 
     // ---------- 类型 ----------
@@ -264,15 +262,13 @@ class DeviceFragment : Fragment() {
     }
 
     private fun confirmDeleteType(item: TypeListItem) {
-        AlertDialog.Builder(requireContext())
-            .setTitle(R.string.delete)
-            .setIcon(android.R.drawable.ic_dialog_alert)
-            .setMessage(getString(R.string.warn_del_type, item.type.name, item.instanceCount))
-            .setPositiveButton(R.string.confirm) { _, _ ->
-                viewLifecycleOwner.lifecycleScope.launch { App.repo.deleteType(item.type.id) }
-            }
-            .setNegativeButton(R.string.cancel, null)
-            .show()
+        com.fieldlog.powerdebug.util.DeleteSafeguard.confirmDelete(
+            context = requireContext(),
+            title = R.string.delete,
+            message = getString(R.string.warn_del_type, item.type.name, item.instanceCount)
+        ) {
+            viewLifecycleOwner.lifecycleScope.launch { App.repo.deleteType(item.type.id) }
+        }
     }
 
     companion object {

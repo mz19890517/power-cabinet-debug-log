@@ -52,6 +52,7 @@
                     tools:text="5" />
 
                 <TextView
+                    android:id="@+id/tv_grid_label_pending"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="@string/grid_pending_label"
@@ -77,6 +78,7 @@
                     tools:text="2" />
 
                 <TextView
+                    android:id="@+id/tv_grid_label_faults"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="@string/grid_faults_label"

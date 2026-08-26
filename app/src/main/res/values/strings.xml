@@ -283,4 +283,29 @@
     <string name="short_name_hint">精简名（网格显示用，不影响导出）</string>
     <string name="short_name_saved">已保存精简名：%1$s</string>
     <string name="short_name_cleared">已清除精简名</string>
+
+    <!-- v2.16：拖动排序 / 名称模式 / 网格列数 / 排列方式 -->
+    <string name="action_drag_sort">拖动排序</string>
+    <string name="drag_sort_active">拖动排序中，拖动柜子调整顺序，点右上角 ✓ 完成</string>
+    <string name="drag_sort_done">排序已保存</string>
+    <string name="action_name_mode_full">显示全名</string>
+    <string name="action_name_mode_short">显示精简名</string>
+    <string name="action_grid_span">每行列数</string>
+    <string name="action_sort">排列方式</string>
+    <string name="sort_custom">自定义（拖动排序）</string>
+    <string name="sort_name_asc">柜名升序</string>
+    <string name="sort_name_desc">柜名降序</string>
+    <string name="sort_fault_desc">待处理故障降序</string>
+    <string name="sort_test_desc">待测数量降序</string>
+    <string name="grid_span_fmt">%1$d列</string>
+    <string name="grid_label_pending_short">待</string>
+    <string name="grid_label_faults_short">故</string>
+
+    <!-- 删除防呆（v2.16） -->
+    <string name="safeguard_section_title">安全设置</string>
+    <string name="delete_safeguard_label">删除防呆（开启后删除需输入当前时间确认）</string>
+    <string name="safeguard_title">删除验证</string>
+    <string name="safeguard_msg">请输入当前时间（HHmm）确认删除：\n当前时间 %1$s</string>
+    <string name="safeguard_time_hint">输入时间如 %1$s</string>
+    <string name="safeguard_wrong">时间不正确，删除已取消</string>
 </resources>

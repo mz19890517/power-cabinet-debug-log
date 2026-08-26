@@ -107,6 +107,12 @@ class ToolsFragment : Fragment() {
             }
         }
         b.btnSyncLog.setOnClickListener { showSyncLogDialog() }
+
+        // 删除防呆开关
+        b.swDeleteSafeguard.isChecked = com.fieldlog.powerdebug.util.DeleteSafeguard.isEnabled(requireContext())
+        b.swDeleteSafeguard.setOnCheckedChangeListener { _, checked ->
+            com.fieldlog.powerdebug.util.DeleteSafeguard.setEnabled(requireContext(), checked)
+        }
     }
 
     /** 诊断日志：同步过程 + 崩溃记录（黑匣子），可一键复制发开发者 */
@@ -443,19 +449,18 @@ class ToolsFragment : Fragment() {
     }
 
     private fun confirmDeleteDebugger(d: com.fieldlog.powerdebug.data.db.Debugger) {
-        Builder(requireContext())
-            .setTitle(R.string.debugger_delete)
-            .setMessage(getString(R.string.debugger_delete_confirm, d.name))
-            .setPositiveButton(R.string.confirm) { _, _ ->
-                viewLifecycleOwner.lifecycleScope.launch {
-                    App.repo.deleteDebugger(d.id)
-                    toast(getString(R.string.debugger_deleted, d.name))
-                    refreshAccountUI()
-                    showDebuggerManager()
-                }
+        com.fieldlog.powerdebug.util.DeleteSafeguard.confirmDelete(
+            context = requireContext(),
+            title = R.string.debugger_delete,
+            message = getString(R.string.debugger_delete_confirm, d.name)
+        ) {
+            viewLifecycleOwner.lifecycleScope.launch {
+                App.repo.deleteDebugger(d.id)
+                toast(getString(R.string.debugger_deleted, d.name))
+                refreshAccountUI()
+                showDebuggerManager()
             }
-            .setNegativeButton(R.string.cancel, null)
-            .show()
+        }
     }
 
     // ---------- Excel 导出 ----------

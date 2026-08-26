@@ -182,19 +182,16 @@ class LogListFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             val linked = App.repo.linkedPlannedOfLog(item.log.id)
             if (linked.isEmpty()) {
-                AlertDialog.Builder(requireContext())
-                    .setTitle(R.string.delete)
-                    .setMessage(
-                        "删除「${item.instanceName} · ${item.log.circuit.ifEmpty { getString(R.string.whole_cabinet) }}」这条日志？\n其下故障记录将一并删除。"
-                    )
-                    .setPositiveButton(R.string.confirm) { _, _ ->
-                        viewLifecycleOwner.lifecycleScope.launch {
-                            App.repo.deleteLog(item.log.id, LogDeleteMode.RESTORE_PLANNED)
-                            reload()
-                        }
+                com.fieldlog.powerdebug.util.DeleteSafeguard.confirmDelete(
+                    context = requireContext(),
+                    title = R.string.delete,
+                    message = "删除「${item.instanceName} · ${item.log.circuit.ifEmpty { getString(R.string.whole_cabinet) }}」这条日志？\n其下故障记录将一并删除。"
+                ) {
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        App.repo.deleteLog(item.log.id, LogDeleteMode.RESTORE_PLANNED)
+                        reload()
                     }
-                    .setNegativeButton(R.string.cancel, null)
-                    .show()
+                }
             } else {
                 // 该日志完成了预选待测项：让用户选择重测还是连项删除
                 AlertDialog.Builder(requireContext())
@@ -205,15 +202,27 @@ class LogListFragment : Fragment() {
                             "它完成了 ${linked.size} 项预选待测项目。\n其下故障记录将一并删除。"
                     )
                     .setPositiveButton(R.string.del_log_retest) { _, _ ->
-                        viewLifecycleOwner.lifecycleScope.launch {
-                            App.repo.deleteLog(item.log.id, LogDeleteMode.RESTORE_PLANNED)
-                            reload()
+                        com.fieldlog.powerdebug.util.DeleteSafeguard.confirmDelete(
+                            context = requireContext(),
+                            title = R.string.delete,
+                            message = "确认删除并恢复预选待测项？"
+                        ) {
+                            viewLifecycleOwner.lifecycleScope.launch {
+                                App.repo.deleteLog(item.log.id, LogDeleteMode.RESTORE_PLANNED)
+                                reload()
+                            }
                         }
                     }
                     .setNeutralButton(R.string.del_log_purge) { _, _ ->
-                        viewLifecycleOwner.lifecycleScope.launch {
-                            App.repo.deleteLog(item.log.id, LogDeleteMode.PURGE_PLANNED)
-                            reload()
+                        com.fieldlog.powerdebug.util.DeleteSafeguard.confirmDelete(
+                            context = requireContext(),
+                            title = R.string.delete,
+                            message = "确认删除并连项删除预选待测项？"
+                        ) {
+                            viewLifecycleOwner.lifecycleScope.launch {
+                                App.repo.deleteLog(item.log.id, LogDeleteMode.PURGE_PLANNED)
+                                reload()
+                            }
                         }
                     }
                     .setNegativeButton(R.string.cancel, null)

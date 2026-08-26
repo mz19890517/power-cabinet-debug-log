@@ -153,11 +153,11 @@ interface InstanceDao {
         (SELECT COUNT(*) FROM planned_items pi2 WHERE pi2.instanceId = i.id AND pi2.enabled = 1 AND pi2.result = 2) AS failedTests,
         (SELECT COUNT(*) FROM fault_records f INNER JOIN debug_logs l ON f.logId = l.id
             WHERE l.instanceId = i.id AND f.status = 0) AS pendingFaults
-        FROM instances i WHERE i.projectId = :projectId ORDER BY i.name"""
+        FROM instances i WHERE i.projectId = :projectId ORDER BY i.sortOrder, i.name"""
     )
     fun watchByProjectWithStatsAsFlow(projectId: String): Flow<List<InstanceStatusRow>>
 
-    @Query("SELECT * FROM instances WHERE projectId = :projectId ORDER BY name")
+    @Query("SELECT * FROM instances WHERE projectId = :projectId ORDER BY sortOrder, name")
     suspend fun byProjectOnce(projectId: String): List<CabinetInstance>
 
     @Query(
@@ -198,6 +198,10 @@ interface InstanceDao {
 
     @Update
     suspend fun updateAll(list: List<CabinetInstance>)
+
+    /** 批量更新排序值 */
+    @Query("UPDATE instances SET sortOrder = :sortOrder WHERE id = :id")
+    suspend fun updateSortOrder(id: String, sortOrder: Int)
 
     @Delete
     suspend fun delete(i: CabinetInstance)

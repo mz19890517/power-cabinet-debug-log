@@ -599,7 +599,7 @@ class Repository(private val db: AppDatabase) {
 
     companion object {
         const val BACKUP_APP_TAG = "power-debug-log"
-        const val BACKUP_SCHEMA = 7
+        const val BACKUP_SCHEMA = 8
     }
 
     /**
@@ -611,6 +611,7 @@ class Repository(private val db: AppDatabase) {
      * schemaVersion 5：新增 debuggers（调试员名单）。
      * schemaVersion 6：新增 deletedItems（删除墓碑，删除操作随同步传播）。
      * schemaVersion 7：CabinetInstance 新增 shortName（精简名，网格视图显示用）。
+     * schemaVersion 8：CabinetInstance 新增 sortOrder（拖动排序用，0=默认按名称）。
      */
     suspend fun backupJson(): String {
         val jo = JSONObject()
@@ -653,6 +654,7 @@ class Repository(private val db: AppDatabase) {
                     .put("name", it.name).put("deviceCode", it.deviceCode)
                     .put("location", it.location).put("installer", it.installer)
                     .put("shortName", it.shortName)
+                    .put("sortOrder", it.sortOrder)
                     .put("createdAt", it.createdAt).put("updatedAt", it.updatedAt)
             })
         )
@@ -756,6 +758,7 @@ class Repository(private val db: AppDatabase) {
                         deviceCode = optString("deviceCode"), location = optString("location"),
                         installer = optString("installer"),
                         shortName = optString("shortName"),
+                        sortOrder = optInt("sortOrder"),
                         createdAt = optLong("createdAt"), updatedAt = optLong("updatedAt")
                     )
                 }
