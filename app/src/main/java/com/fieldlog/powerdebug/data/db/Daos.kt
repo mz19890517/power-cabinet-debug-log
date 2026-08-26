@@ -203,6 +203,10 @@ interface InstanceDao {
     @Query("UPDATE instances SET sortOrder = :sortOrder WHERE id = :id")
     suspend fun updateSortOrder(id: String, sortOrder: Int)
 
+    /** 更新行分组（0=未分组） */
+    @Query("UPDATE instances SET rowGroup = :rowGroup WHERE id = :id")
+    suspend fun updateRowGroup(id: String, rowGroup: Int)
+
     @Delete
     suspend fun delete(i: CabinetInstance)
 

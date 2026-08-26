@@ -54,7 +54,6 @@ class ProjectDetailActivity : AppCompatActivity() {
         private const val KEY_GRID_VIEW = "grid_view"
         private const val KEY_NAME_MODE = "name_mode"
         private const val KEY_SORT_MODE = "sort_mode"
-        private const val KEY_ROW_ASSIGNMENTS = "row_assignments"
         private const val TYPE_LIST = 0
         private const val TYPE_GRID = 1
         private const val TYPE_GRID_GROUPED = 2
@@ -78,10 +77,6 @@ class ProjectDetailActivity : AppCompatActivity() {
     private var isShortNameMode = false
     private var sortMode = SORT_CUSTOM
 
-    // 行分配数据：行号(1开始) → 该行的柜子ID列表
-    // 从 SharedPreferences 读取 JSON 字符串，格式：{"1":["id1","id2"],"2":["id3"]}
-    private var rowAssignments: MutableMap<Int, MutableList<String>> = mutableMapOf()
-
     /** 单柜日志导出（长按菜单入口） */
     private var exportInstanceId = ""
     private var currentInstanceFilter = ExportFilter()
@@ -102,7 +97,6 @@ class ProjectDetailActivity : AppCompatActivity() {
         isGridLayout = prefs.getBoolean(KEY_GRID_VIEW, false)
         isShortNameMode = prefs.getBoolean(KEY_NAME_MODE, false)
         sortMode = prefs.getInt(KEY_SORT_MODE, SORT_CUSTOM)
-        loadRowAssignments(prefs)
 
         lifecycleScope.launch {
             typeNames = App.repo.allTypes().associate { it.id to it.name }
@@ -147,7 +141,7 @@ class ProjectDetailActivity : AppCompatActivity() {
 
     /** 根据当前排列方式提交数据 */
     private fun submitData() {
-        if (sortMode == SORT_CUSTOM && rowAssignments.isNotEmpty()) {
+        if (sortMode == SORT_CUSTOM) {
             // 自定义模式：按行分配显示
             val grouped = buildGroupedList()
             adapter.submitGrouped(grouped)
@@ -164,16 +158,17 @@ class ProjectDetailActivity : AppCompatActivity() {
         }
     }
 
-    /** 根据 rowAssignments 构建行分组列表，每行最多 MAX_PER_ROW 个 */
+    /** 根据数据库 rowGroup 字段构建行分组列表，每行最多 MAX_PER_ROW 个 */
     private fun buildGroupedList(): List<List<InstanceStatusRow>> {
         val allRows = mutableListOf<List<InstanceStatusRow>>()
         val assignedIds = mutableSetOf<String>()
 
-        // 先输出已分配的行
-        val sortedRowNums = rowAssignments.keys.sorted()
-        for (rowNum in sortedRowNums) {
-            val ids = rowAssignments[rowNum] ?: continue
-            val items = ids.mapNotNull { id -> latestRows.find { it.instance.id == id } }
+        // 按 rowGroup 分组（rowGroup=0 表示未分组）
+        val grouped = latestRows.filter { it.instance.rowGroup > 0 }
+            .groupBy { it.instance.rowGroup }
+            .toSortedMap()
+
+        for ((_, items) in grouped) {
             if (items.isNotEmpty()) {
                 allRows.add(items.take(MAX_PER_ROW))
                 items.take(MAX_PER_ROW).forEach { assignedIds.add(it.instance.id) }
@@ -454,55 +449,25 @@ class ProjectDetailActivity : AppCompatActivity() {
                 newAssignments[rowNum] = ids
             }
         }
-        rowAssignments = newAssignments
-        saveRowAssignments()
 
-        // 更新 sortOrder 字段
+        // 保存到数据库（rowGroup 字段随同步互通）
         lifecycleScope.launch {
             var order = 1
-            for ((_, ids) in newAssignments.toSortedMap()) {
+            for ((rowNum, ids) in newAssignments.toSortedMap()) {
                 for (id in ids) {
+                    App.db.instanceDao().updateRowGroup(id, rowNum)
                     App.db.instanceDao().updateSortOrder(id, order++)
                 }
             }
-            // 未分配的柜子排在最后
+            // 未分配的柜子：rowGroup=0，排在最后
             val assignedIds = newAssignments.values.flatten().toSet()
             for (row in latestRows) {
                 if (row.instance.id !in assignedIds) {
+                    App.db.instanceDao().updateRowGroup(row.instance.id, 0)
                     App.db.instanceDao().updateSortOrder(row.instance.id, order++)
                 }
             }
         }
-    }
-
-    private fun loadRowAssignments(prefs: android.content.SharedPreferences) {
-        val json = prefs.getString(KEY_ROW_ASSIGNMENTS, null) ?: return
-        try {
-            val obj = org.json.JSONObject(json)
-            for (key in obj.keys()) {
-                val rowNum = key.toIntOrNull() ?: continue
-                val arr = obj.getJSONArray(key)
-                val ids = mutableListOf<String>()
-                for (i in 0 until arr.length()) {
-                    ids.add(arr.getString(i))
-                }
-                rowAssignments[rowNum] = ids
-            }
-        } catch (_: Exception) {
-            rowAssignments.clear()
-        }
-    }
-
-    private fun saveRowAssignments() {
-        val obj = org.json.JSONObject()
-        for ((rowNum, ids) in rowAssignments) {
-            val arr = org.json.JSONArray()
-            ids.forEach { arr.put(it) }
-            obj.put(rowNum.toString(), arr)
-        }
-        getSharedPreferences(PREF_NAME, MODE_PRIVATE).edit()
-            .putString(KEY_ROW_ASSIGNMENTS, obj.toString())
-            .apply()
     }
 
     // ---------- 柜子实例 ----------
