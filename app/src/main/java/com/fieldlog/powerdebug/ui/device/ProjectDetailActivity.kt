@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.text.SpannableStringBuilder
 import android.text.style.ForegroundColorSpan
+import android.view.LayoutInflater
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
@@ -18,6 +19,7 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.fieldlog.powerdebug.App
@@ -29,6 +31,7 @@ import com.fieldlog.powerdebug.data.db.InstanceStatusRow
 import com.fieldlog.powerdebug.ui.FilterDialogHelper
 import com.fieldlog.powerdebug.data.db.Project
 import com.fieldlog.powerdebug.databinding.ItemSimpleCardBinding
+import com.fieldlog.powerdebug.databinding.ItemSimpleCardGridBinding
 import com.fieldlog.powerdebug.ui.log.LogEditActivity
 import com.fieldlog.powerdebug.ui.test.PlannedManageActivity
 import com.fieldlog.powerdebug.ui.test.TestChecklistActivity
@@ -44,6 +47,8 @@ class ProjectDetailActivity : AppCompatActivity() {
         const val KEY_PROJECT_ID = "project_id"
         private const val XLSX_MIME =
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        private const val PREF_NAME = "project_detail_prefs"
+        private const val KEY_GRID_VIEW = "grid_view"
 
         fun intent(ctx: Context, projectId: String) =
             Intent(ctx, ProjectDetailActivity::class.java).putExtra(KEY_PROJECT_ID, projectId)
@@ -54,6 +59,7 @@ class ProjectDetailActivity : AppCompatActivity() {
     private var typeNames: Map<String, String> = emptyMap()
     private var project: Project? = null
     private var latestRows: List<InstanceStatusRow> = emptyList()
+    private var isGridLayout = false
 
     /** 单柜日志导出（长按菜单入口） */
     private var exportInstanceId = ""
@@ -71,6 +77,7 @@ class ProjectDetailActivity : AppCompatActivity() {
         findViewById<androidx.appcompat.widget.Toolbar>(R.id.toolbar).setNavigationOnClickListener { finish() }
 
         projectId = intent.getStringExtra(KEY_PROJECT_ID).orEmpty()
+        isGridLayout = getSharedPreferences(PREF_NAME, MODE_PRIVATE).getBoolean(KEY_GRID_VIEW, false)
 
         lifecycleScope.launch {
             typeNames = App.repo.allTypes().associate { it.id to it.name }
@@ -78,10 +85,11 @@ class ProjectDetailActivity : AppCompatActivity() {
 
         adapter = InstanceAdapter(
             onClick = { routeInstanceClick(it.instance) },
-            onLongClick = { showInstanceMenu(it.instance) }
+            onLongClick = { showInstanceMenu(it.instance) },
+            onGridLongClick = { showShortNameDialog(it.instance) }
         )
         val rv = findViewById<RecyclerView>(R.id.rv_instances)
-        rv.layoutManager = LinearLayoutManager(this)
+        rv.layoutManager = if (isGridLayout) GridLayoutManager(this, 3) else LinearLayoutManager(this)
         rv.adapter = adapter
 
         findViewById<View>(R.id.btn_add_instance).setOnClickListener { showInstanceDialog(null) }
@@ -120,13 +128,53 @@ class ProjectDetailActivity : AppCompatActivity() {
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.menu_project_detail, menu)
+        updateMenuIcon(menu)
         return true
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean = when (item.itemId) {
+        R.id.action_toggle_view -> { toggleView(); true }
         R.id.action_edit_project -> { project?.let { editProject(it) }; true }
         R.id.action_delete_project -> { deleteProject(); true }
         else -> super.onOptionsItemSelected(item)
+    }
+
+    private fun updateMenuIcon(menu: Menu) {
+        val toggleItem = menu.findItem(R.id.action_toggle_view)
+        toggleItem?.setIcon(if (isGridLayout) R.drawable.ic_list_view else R.drawable.ic_grid_view)
+    }
+
+    private fun toggleView() {
+        isGridLayout = !isGridLayout
+        getSharedPreferences(PREF_NAME, MODE_PRIVATE).edit().putBoolean(KEY_GRID_VIEW, isGridLayout).apply()
+        val rv = findViewById<RecyclerView>(R.id.rv_instances)
+        rv.layoutManager = if (isGridLayout) GridLayoutManager(this, 3) else LinearLayoutManager(this)
+        adapter.notifyDataSetChanged()
+        invalidateOptionsMenu()
+    }
+
+    private fun showShortNameDialog(inst: com.fieldlog.powerdebug.data.db.CabinetInstance) {
+        val et = EditText(this).apply {
+            setText(inst.shortName)
+            hint = getString(R.string.short_name_hint)
+            setPadding(48, 32, 48, 16)
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.short_name_title)
+            .setView(et)
+            .setPositiveButton(R.string.save) { _, _ ->
+                val newName = et.text?.toString()?.trim().orEmpty()
+                lifecycleScope.launch {
+                    App.repo.saveInstance(inst.copy(shortName = newName, updatedAt = System.currentTimeMillis()))
+                    if (newName.isNotEmpty()) {
+                        Toast.makeText(this@ProjectDetailActivity, getString(R.string.short_name_saved, newName), Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(this@ProjectDetailActivity, R.string.short_name_cleared, Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
     }
 
     private fun editProject(p: Project) {
@@ -463,6 +511,7 @@ class ProjectDetailActivity : AppCompatActivity() {
                                 deviceCode = etCode.text?.toString()?.trim().orEmpty(),
                                 location = etLocation.text?.toString()?.trim().orEmpty(),
                                 installer = etInstaller.text?.toString()?.trim().orEmpty(),
+                                shortName = existing?.shortName.orEmpty(),
                                 createdAt = existing?.createdAt ?: System.currentTimeMillis()
                             )
                         )
@@ -482,8 +531,14 @@ class ProjectDetailActivity : AppCompatActivity() {
 
     private inner class InstanceAdapter(
         private val onClick: (InstanceStatusRow) -> Unit,
-        private val onLongClick: (InstanceStatusRow) -> Unit
-    ) : RecyclerView.Adapter<InstanceAdapter.VH>() {
+        private val onLongClick: (InstanceStatusRow) -> Unit,
+        private val onGridLongClick: (InstanceStatusRow) -> Unit
+    ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+
+        companion object {
+            private const val TYPE_LIST = 0
+            private const val TYPE_GRID = 1
+        }
 
         private val data = mutableListOf<InstanceStatusRow>()
 
@@ -491,15 +546,29 @@ class ProjectDetailActivity : AppCompatActivity() {
             data.clear(); data.addAll(list); notifyDataSetChanged()
         }
 
-        inner class VH(val ib: ItemSimpleCardBinding) : RecyclerView.ViewHolder(ib.root)
+        override fun getItemViewType(position: Int) = if (isGridLayout) TYPE_GRID else TYPE_LIST
 
-        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) =
-            VH(ItemSimpleCardBinding.inflate(layoutInflater, parent, false))
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
+            return if (viewType == TYPE_GRID) {
+                val binding = ItemSimpleCardGridBinding.inflate(layoutInflater, parent, false)
+                GridVH(binding)
+            } else {
+                val binding = ItemSimpleCardBinding.inflate(layoutInflater, parent, false)
+                ListVH(binding)
+            }
+        }
 
         override fun getItemCount() = data.size
 
-        override fun onBindViewHolder(h: VH, pos: Int) {
-            val row = data[pos]
+        override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+            val row = data[position]
+            when (holder) {
+                is ListVH -> bindListRow(holder, row)
+                is GridVH -> bindGridRow(holder, row)
+            }
+        }
+
+        private fun bindListRow(h: ListVH, row: InstanceStatusRow) {
             val item = row.instance
             h.ib.tvName.text = item.name
             val base = buildString {
@@ -531,5 +600,20 @@ class ProjectDetailActivity : AppCompatActivity() {
             h.ib.root.setOnClickListener { onClick(row) }
             h.ib.root.setOnLongClickListener { onLongClick(row); true }
         }
+
+        private fun bindGridRow(h: GridVH, row: InstanceStatusRow) {
+            val item = row.instance
+            // 优先显示精简名
+            val displayName = item.shortName.ifBlank { item.name }
+            h.ib.tvGridName.text = displayName
+            h.ib.tvGridName.contentDescription = item.name
+            h.ib.tvGridPending.text = row.pendingTests.toString()
+            h.ib.tvGridFaults.text = row.pendingFaults.toString()
+            h.ib.root.setOnClickListener { onClick(row) }
+            h.ib.root.setOnLongClickListener { onGridLongClick(row); true }
+        }
+
+        inner class ListVH(val ib: ItemSimpleCardBinding) : RecyclerView.ViewHolder(ib.root)
+        inner class GridVH(val ib: ItemSimpleCardGridBinding) : RecyclerView.ViewHolder(ib.root)
     }
 }

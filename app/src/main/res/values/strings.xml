@@ -274,4 +274,13 @@
     <string name="export_filter_fault_cols_label">故障记录列</string>
     <string name="export_filter_cols_hint">不勾选=全部列导出</string>
     <string name="export_filter_no_testers">暂无调试员</string>
+
+    <!-- 网格视图 / 精简名（v2.15） -->
+    <string name="grid_pending_label">待测</string>
+    <string name="grid_faults_label">故障</string>
+    <string name="grid_toggle_desc">切换列表/网格视图</string>
+    <string name="short_name_title">设置精简名</string>
+    <string name="short_name_hint">精简名（网格显示用，不影响导出）</string>
+    <string name="short_name_saved">已保存精简名：%1$s</string>
+    <string name="short_name_cleared">已清除精简名</string>
 </resources>

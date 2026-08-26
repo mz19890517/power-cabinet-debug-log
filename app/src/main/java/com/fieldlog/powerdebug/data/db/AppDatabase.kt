@@ -20,7 +20,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         Debugger::class,
         DeletedItem::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -245,9 +245,16 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** v6→v7：柜子实例新增精简名 shortName（网格视图显示用，不影响导出） */
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `instances` ADD COLUMN `shortName` TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         fun build(context: Context): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, DB_NAME)
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
                 .build()
     }
 }

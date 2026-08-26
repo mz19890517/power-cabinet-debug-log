@@ -599,7 +599,7 @@ class Repository(private val db: AppDatabase) {
 
     companion object {
         const val BACKUP_APP_TAG = "power-debug-log"
-        const val BACKUP_SCHEMA = 6
+        const val BACKUP_SCHEMA = 7
     }
 
     /**
@@ -610,6 +610,7 @@ class Repository(private val db: AppDatabase) {
      * schemaVersion 4：plannedItems 增加三态结果 result 与关联故障 faultId。
      * schemaVersion 5：新增 debuggers（调试员名单）。
      * schemaVersion 6：新增 deletedItems（删除墓碑，删除操作随同步传播）。
+     * schemaVersion 7：CabinetInstance 新增 shortName（精简名，网格视图显示用）。
      */
     suspend fun backupJson(): String {
         val jo = JSONObject()
@@ -651,6 +652,7 @@ class Repository(private val db: AppDatabase) {
                     .put("id", it.id).put("projectId", it.projectId).put("typeId", it.typeId)
                     .put("name", it.name).put("deviceCode", it.deviceCode)
                     .put("location", it.location).put("installer", it.installer)
+                    .put("shortName", it.shortName)
                     .put("createdAt", it.createdAt).put("updatedAt", it.updatedAt)
             })
         )
@@ -753,6 +755,7 @@ class Repository(private val db: AppDatabase) {
                         typeId = getString("typeId"), name = getString("name"),
                         deviceCode = optString("deviceCode"), location = optString("location"),
                         installer = optString("installer"),
+                        shortName = optString("shortName"),
                         createdAt = optLong("createdAt"), updatedAt = optLong("updatedAt")
                     )
                 }
@@ -864,6 +867,7 @@ class Repository(private val db: AppDatabase) {
                     name = getString("name"),
                     deviceCode = optString("deviceCode"), location = optString("location"),
                     installer = optString("installer"),
+                    shortName = optString("shortName"),
                     createdAt = t, updatedAt = optLong("updatedAt", t)
                 )
             }
@@ -952,6 +956,7 @@ class Repository(private val db: AppDatabase) {
                         typeId = getString("typeId"), name = getString("name"),
                         deviceCode = optString("deviceCode"), location = optString("location"),
                         installer = optString("installer"),
+                        shortName = optString("shortName"),
                         createdAt = optLong("createdAt"), updatedAt = optLong("updatedAt")
                     )
                 }
