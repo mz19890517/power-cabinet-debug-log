@@ -1,7 +1,6 @@
 package com.fieldlog.powerdebug.ui.log
 
 import android.app.AlertDialog
-import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -57,7 +56,7 @@ class LogListFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         adapter = LogAdapter(
-            onClick = { startActivity(logIntent(it.log.id)) },
+            onClick = { },
             onLongClick = { confirmDelete(it) }
         )
         b.rvLogs.layoutManager = LinearLayoutManager(requireContext())
@@ -92,12 +91,6 @@ class LogListFragment : Fragment() {
 
         b.etCircuitFilter.addTextChangedListener(debounceWatcher)
         b.etTextSearch.addTextChangedListener(debounceWatcher)
-
-        b.fabNewLog.setOnClickListener {
-            val intent = Intent(requireContext(), LogEditActivity::class.java)
-            if (selInstanceId.isNotEmpty()) intent.putExtra(LogEditActivity.KEY_INSTANCE_ID, selInstanceId)
-            startActivity(intent)
-        }
 
         viewLifecycleOwner.lifecycleScope.launch { reloadInstances() }
     }
@@ -233,10 +226,6 @@ class LogListFragment : Fragment() {
             }
         }
     }
-
-    private fun logIntent(logId: String) =
-        Intent(requireContext(), LogEditActivity::class.java)
-            .putExtra(LogEditActivity.KEY_LOG_ID, logId)
 
     // ---------- Spinner 工具 ----------
 

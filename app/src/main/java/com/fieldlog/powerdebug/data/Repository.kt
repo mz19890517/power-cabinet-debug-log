@@ -422,13 +422,13 @@ class Repository(private val db: AppDatabase) {
      * 未通过项逐个生成故障记录（现象=现场必填内容，状态待处理）挂到日志下；
      * 复测通过的项若上次有未解决故障 → 自动标记已解决；
      * 测试人员必须来自调试员名单（调用方传入当前调试员），绝不回落到登录账号；同时候选池沉淀。
-     * @param failedItems 未通过项：预选项id to 故障现象（必填）
+     * @param failedItems 未通过项：预选项id to 故障现象列表（每项可有多条故障）
      * @return 新日志id
      */
     suspend fun startTestSave(
         instanceId: String,
         passIds: List<String>,
-        failedItems: List<Pair<String, String>>,
+        failedItems: List<Pair<String, List<String>>>,
         testerInput: String,
         actor: String
     ): String {
@@ -451,25 +451,35 @@ class Repository(private val db: AppDatabase) {
             logDao.insert(log)
 
             // 通过项批量标记；复测通过项的旧故障自动解决；
-            // 未通过项先生成故障记录再逐项标记并关联
+            // 未通过项先生成故障记录再逐项标记并关联（每项可有多条故障，逗号分隔存faultId）
             val passSet = passIds.toSet()
             val passHitIds = items.filter { it.id in passSet }.map { it.id }
             if (passHitIds.isNotEmpty()) {
                 val prevFaults = items.filter { it.id in passSet && it.faultId.isNotEmpty() }
-                    .map { it.faultId }.distinct()
+                    .flatMap { it.faultId.split(",") }.filter { it.isNotEmpty() }.distinct()
                 if (prevFaults.isNotEmpty()) faultDao.resolveByIds(prevFaults, t)
                 plannedDao.setResult(passHitIds, PlannedItem.RESULT_PASS, t, log.id, "")
             }
-            failedItems.forEach { (itemId, symptom) ->
+            failedItems.forEach { (itemId, symptoms) ->
                 val item = items.firstOrNull { it.id == itemId } ?: return@forEach
-                val f = FaultRecord(
-                    id = newId(), logId = log.id, circuit = "",
-                    symptom = symptom.trim(), solution = "",
-                    occurredAt = t, resolvedAt = 0,
-                    status = FaultRecord.STATUS_PENDING, updatedAt = t
-                )
-                faultDao.insert(f)
-                plannedDao.setResult(listOf(itemId), PlannedItem.RESULT_FAIL, t, log.id, f.id)
+                val faultIds = mutableListOf<String>()
+                symptoms.forEach { symptom ->
+                    if (symptom.isBlank()) return@forEach
+                    val f = FaultRecord(
+                        id = newId(), logId = log.id, circuit = "",
+                        symptom = symptom.trim(), solution = "",
+                        occurredAt = t, resolvedAt = 0,
+                        status = FaultRecord.STATUS_PENDING, updatedAt = t
+                    )
+                    faultDao.insert(f)
+                    faultIds.add(f.id)
+                }
+                if (faultIds.isNotEmpty()) {
+                    plannedDao.setResult(
+                        listOf(itemId), PlannedItem.RESULT_FAIL, t, log.id,
+                        faultIds.joinToString(",")
+                    )
+                }
             }
 
             val existing = candDao.contentsOnce(inst.typeId).map { it.trim() }.toHashSet()
@@ -483,6 +493,19 @@ class Repository(private val db: AppDatabase) {
     }
 
     suspend fun faultsOf(logId: String) = faultDao.forLogOnce(logId)
+
+    /** 按id列表查询故障记录（TestChecklistActivity故障列表用） */
+    suspend fun faultsByIds(ids: List<String>): List<FaultRecord> = faultDao.byIdsOnce(ids)
+
+    /** 单条故障标记通过（复测通过时调用） */
+    suspend fun passSingleFault(faultId: String) {
+        faultDao.passSingle(faultId)
+    }
+
+    /** 单条故障驳回（恢复为待处理） */
+    suspend fun unpassSingleFault(faultId: String) {
+        faultDao.unpassSingle(faultId)
+    }
 
     // ---------- 测试员账号 ----------
 

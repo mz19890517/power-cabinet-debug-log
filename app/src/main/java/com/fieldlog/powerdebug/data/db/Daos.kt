@@ -369,6 +369,14 @@ interface FaultRecordDao {
     )
     suspend fun resolveByIds(ids: List<String>, t: Long)
 
+    /** 单条标记通过 */
+    @Query("UPDATE fault_records SET status = 1, resolvedAt = :t, updatedAt = :t WHERE id = :id AND status = 0")
+    suspend fun passSingle(id: String, t: Long = System.currentTimeMillis())
+
+    /** 单条驳回（恢复为待处理） */
+    @Query("UPDATE fault_records SET status = 0, resolvedAt = 0, updatedAt = :t WHERE id = :id AND status = 1")
+    suspend fun unpassSingle(id: String, t: Long = System.currentTimeMillis())
+
     @Query("DELETE FROM fault_records")
     suspend fun wipe()
 

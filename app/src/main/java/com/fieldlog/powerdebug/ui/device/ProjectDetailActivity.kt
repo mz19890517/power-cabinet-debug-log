@@ -34,7 +34,6 @@ import com.fieldlog.powerdebug.ui.FilterDialogHelper
 import com.fieldlog.powerdebug.data.db.Project
 import com.fieldlog.powerdebug.databinding.ItemSimpleCardBinding
 import com.fieldlog.powerdebug.databinding.ItemSimpleCardGridBinding
-import com.fieldlog.powerdebug.ui.log.LogEditActivity
 import com.fieldlog.powerdebug.ui.test.PlannedManageActivity
 import com.fieldlog.powerdebug.ui.test.TestChecklistActivity
 import com.fieldlog.powerdebug.util.DeleteSafeguard
@@ -493,7 +492,6 @@ class ProjectDetailActivity : AppCompatActivity() {
                     getString(R.string.menu_edit_instance),
                     getString(R.string.short_name_title),
                     getString(R.string.menu_manage_planned),
-                    getString(R.string.menu_log_new_here),
                     getString(R.string.menu_export_instance),
                     getString(R.string.menu_pull_planned),
                     getString(R.string.delete)
@@ -503,14 +501,9 @@ class ProjectDetailActivity : AppCompatActivity() {
                     0 -> showInstanceDialog(inst)
                     1 -> showShortNameDialog(inst)
                     2 -> startActivity(PlannedManageActivity.intent(this, inst.id))
-                    3 -> startActivity(
-                        Intent(this, LogEditActivity::class.java)
-                            .putExtra(LogEditActivity.KEY_INSTANCE_ID, inst.id)
-                            .putExtra(LogEditActivity.KEY_PROJECT_ID, projectId)
-                    )
-                    4 -> requestExportInstance(inst)
-                    5 -> showPullSourceDialog(inst)
-                    6 -> confirmDeleteInstance(inst)
+                    3 -> requestExportInstance(inst)
+                    4 -> showPullSourceDialog(inst)
+                    5 -> confirmDeleteInstance(inst)
                 }
             }
             .show()
