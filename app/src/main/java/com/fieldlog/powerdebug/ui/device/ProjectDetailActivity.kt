@@ -49,6 +49,8 @@ class ProjectDetailActivity : AppCompatActivity() {
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         private const val PREF_NAME = "project_detail_prefs"
         private const val KEY_GRID_VIEW = "grid_view"
+        private const val TYPE_LIST = 0
+        private const val TYPE_GRID = 1
 
         fun intent(ctx: Context, projectId: String) =
             Intent(ctx, ProjectDetailActivity::class.java).putExtra(KEY_PROJECT_ID, projectId)
@@ -534,11 +536,6 @@ class ProjectDetailActivity : AppCompatActivity() {
         private val onLongClick: (InstanceStatusRow) -> Unit,
         private val onGridLongClick: (InstanceStatusRow) -> Unit
     ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
-
-        companion object {
-            private const val TYPE_LIST = 0
-            private const val TYPE_GRID = 1
-        }
 
         private val data = mutableListOf<InstanceStatusRow>()
 
