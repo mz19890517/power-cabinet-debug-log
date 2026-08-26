@@ -227,7 +227,6 @@
     <!-- v2.6：当前调试员 / 定向导出 / 复测自动销故障 -->
     <string name="debugger_switch_title">切换当前调试员</string>
     <string name="debugger_none_set">未绑定，点击选择</string>
-    <string name="debugger_pick_first">请先绑定本机当前调试员（点顶部信息行切换）</string>
     <string name="generate_confirm_fmt2">将把已操作的 %1$d 项合并为一条调试日志（整柜）。</string>
     <string name="generate_as_debugger">调试员：%1$s</string>
     <string name="planned_passed">✓ 已通过</string>
