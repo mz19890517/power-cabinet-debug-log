@@ -125,16 +125,20 @@ class ProjectDetailActivity : AppCompatActivity() {
             ): Boolean {
                 val from = viewHolder.adapterPosition
                 val to = target.adapterPosition
+                if (from == RecyclerView.NO_POSITION || to == RecyclerView.NO_POSITION) return false
                 if (from == to) return false
+                // 只交换两个位置，不全量刷新
                 val list = adapter.getData().toMutableList()
                 val item = list.removeAt(from)
                 list.add(to, item)
-                adapter.submitDirect(list)
+                adapter.swapItems(from, to)
+                SyncLog.append(this@ProjectDetailActivity, "拖动 move from=$from to=$to size=${list.size}")
                 return true
             }
             override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {}
             override fun clearView(recyclerView: RecyclerView, viewHolder: RecyclerView.ViewHolder) {
                 super.clearView(recyclerView, viewHolder)
+                SyncLog.append(this@ProjectDetailActivity, "拖动 clearView, 保存排序")
                 saveDragOrder()
             }
         }
@@ -235,10 +239,19 @@ class ProjectDetailActivity : AppCompatActivity() {
         menu.findItem(R.id.action_sort_fault_desc)?.isChecked = sortMode == SORT_FAULT_DESC
         menu.findItem(R.id.action_sort_test_desc)?.isChecked = sortMode == SORT_TEST_DESC
 
-        // 网格列数 check 状态
-        menu.findItem(R.id.action_grid_span_2)?.isChecked = gridSpanCount == 2
-        menu.findItem(R.id.action_grid_span_3)?.isChecked = gridSpanCount == 3
-        menu.findItem(R.id.action_grid_span_4)?.isChecked = gridSpanCount == 4
+        // 网格列数 check 状态 + 标题格式化
+        menu.findItem(R.id.action_grid_span_2)?.apply {
+            isChecked = gridSpanCount == 2
+            setTitle(getString(R.string.grid_span_fmt, 2))
+        }
+        menu.findItem(R.id.action_grid_span_3)?.apply {
+            isChecked = gridSpanCount == 3
+            setTitle(getString(R.string.grid_span_fmt, 3))
+        }
+        menu.findItem(R.id.action_grid_span_4)?.apply {
+            isChecked = gridSpanCount == 4
+            setTitle(getString(R.string.grid_span_fmt, 4))
+        }
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean = when (item.itemId) {
@@ -271,12 +284,18 @@ class ProjectDetailActivity : AppCompatActivity() {
         isDragMode = !isDragMode
         val rv = findViewById<RecyclerView>(R.id.rv_instances)
         if (isDragMode) {
+            // 进入拖动模式：禁用自定义排序，让数据顺序=显示顺序
+            adapter.submit(latestRows.sortedBy { if (it.instance.sortOrder == 0) Int.MAX_VALUE else it.instance.sortOrder })
             itemTouchHelper?.attachToRecyclerView(rv)
             Toast.makeText(this, R.string.drag_sort_active, Toast.LENGTH_LONG).show()
+            SyncLog.append(this, "进入拖动模式, 柜子数=${latestRows.size}")
         } else {
             itemTouchHelper?.attachToRecyclerView(null)
             saveDragOrder()
+            // 退出拖动模式：恢复排序显示
+            submitSorted(latestRows)
             Toast.makeText(this, R.string.drag_sort_done, Toast.LENGTH_SHORT).show()
+            SyncLog.append(this, "退出拖动模式")
         }
         invalidateOptionsMenu()
     }
@@ -693,9 +712,12 @@ class ProjectDetailActivity : AppCompatActivity() {
             data.clear(); data.addAll(list); notifyDataSetChanged()
         }
 
-        /** 拖动排序时直接替换数据，不触发 notifyDataSetChanged 以保持动画 */
-        fun submitDirect(list: List<InstanceStatusRow>) {
-            data.clear(); data.addAll(list); notifyDataSetChanged()
+        /** 拖动时仅交换两个位置，不全量刷新 */
+        fun swapItems(from: Int, to: Int) {
+            if (from < 0 || from >= data.size || to < 0 || to >= data.size) return
+            val item = data.removeAt(from)
+            data.add(to, item)
+            notifyItemMoved(from, to)
         }
 
         fun getData(): List<InstanceStatusRow> = listOf(*data.toTypedArray())
