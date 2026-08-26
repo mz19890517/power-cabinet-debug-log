@@ -76,7 +76,7 @@ object FilterDialogHelper {
 
         fun showDatePicker(et: EditText) {
             val c = Calendar.getInstance()
-            val text = et.text?.toString()?.trim().ifNullOrEmpty { null }
+            val text = et.text?.toString()?.trim().let { if (it.isNullOrEmpty()) null else it }
             text?.let {
                 try {
                     val p = it.split("-")
