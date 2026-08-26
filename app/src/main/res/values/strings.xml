@@ -300,7 +300,7 @@
     <string name="row_editor_auto_sort">自动排序</string>
     <string name="sort_custom_row">自定义行分配</string>
     <string name="row_editor_hint">点击行号向该行添加柜子（每行最多4个，不足4个居中显示）</string>
-    <string name="row_number_fmt">第%1$d行</string>
+    <string name="row_number_fmt">%1$d</string>
     <string name="row_add_to">添加柜子到此行</string>
     <string name="row_remove_from">移除</string>
     <string name="row_add_cabinet_fmt">添加到第%1$d行</string>

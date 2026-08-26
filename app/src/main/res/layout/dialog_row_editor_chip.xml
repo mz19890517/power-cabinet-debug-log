@@ -16,9 +16,9 @@
         android:layout_height="wrap_content"
         android:textSize="12sp"
         android:textColor="@color/on_surface"
-        android:maxWidth="80dp"
+        android:maxWidth="120dp"
         android:ellipsize="end"
-        android:maxLines="1" />
+        android:maxLines="3" />
 
     <ImageButton
         android:id="@+id/btn_chip_remove"

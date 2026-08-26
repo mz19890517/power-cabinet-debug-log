@@ -79,6 +79,7 @@ data class CabinetInstance(
     val installer: String = "",
     val shortName: String = "",
     val sortOrder: Int = 0,
+    val rowGroup: Int = 0,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )

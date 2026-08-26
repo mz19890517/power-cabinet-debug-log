@@ -335,39 +335,44 @@ class ProjectDetailActivity : AppCompatActivity() {
 
         for ((index, row) in grouped.withIndex()) {
             val rowNum = index + 1
-            val rowView = layoutInflater.inflate(R.layout.dialog_row_editor_row, container, false)
-            val tvRowNum = rowView.findViewById<TextView>(R.id.tv_row_number)
-            val rowItemsContainer = rowView.findViewById<LinearLayout>(R.id.row_items_container)
-            val btnAddToRow = rowView.findViewById<View>(R.id.btn_add_to_row)
-
-            tvRowNum.text = getString(R.string.row_number_fmt, rowNum)
-
-            // 显示该行的柜子
-            for (item in row) {
-                val chip = layoutInflater.inflate(R.layout.dialog_row_editor_chip, rowItemsContainer, false)
-                val tvChipName = chip.findViewById<TextView>(R.id.tv_chip_name)
-                val btnRemove = chip.findViewById<View>(R.id.btn_chip_remove)
-
-                tvChipName.text = if (isShortNameMode) {
-                    item.instance.shortName.ifBlank { item.instance.name }
-                } else {
-                    item.instance.name
-                }
-
-                btnRemove.setOnClickListener {
-                    rowItemsContainer.removeView(chip)
-                }
-
-                rowItemsContainer.addView(chip)
-            }
-
-            // 点击行号添加柜子
-            btnAddToRow.setOnClickListener {
-                showAddToRowDialog(rowNum, rowItemsContainer)
-            }
-
-            container.addView(rowView)
+            addRowToEditor(container, rowNum, row)
         }
+
+        // 永远在尾端多加一行空号，方便继续添加
+        addRowToEditor(container, grouped.size + 1, emptyList())
+    }
+
+    private fun addRowToEditor(container: LinearLayout, rowNum: Int, items: List<InstanceStatusRow>) {
+        val rowView = layoutInflater.inflate(R.layout.dialog_row_editor_row, container, false)
+        val tvRowNum = rowView.findViewById<TextView>(R.id.tv_row_number)
+        val rowItemsContainer = rowView.findViewById<LinearLayout>(R.id.row_items_container)
+        val btnAddToRow = rowView.findViewById<View>(R.id.btn_add_to_row)
+
+        tvRowNum.text = getString(R.string.row_number_fmt, rowNum)
+
+        for (item in items) {
+            val chip = layoutInflater.inflate(R.layout.dialog_row_editor_chip, rowItemsContainer, false)
+            val tvChipName = chip.findViewById<TextView>(R.id.tv_chip_name)
+            val btnRemove = chip.findViewById<View>(R.id.btn_chip_remove)
+
+            tvChipName.text = if (isShortNameMode) {
+                item.instance.shortName.ifBlank { item.instance.name }
+            } else {
+                item.instance.name
+            }
+
+            btnRemove.setOnClickListener {
+                rowItemsContainer.removeView(chip)
+            }
+
+            rowItemsContainer.addView(chip)
+        }
+
+        btnAddToRow.setOnClickListener {
+            showAddToRowDialog(rowNum, rowItemsContainer)
+        }
+
+        container.addView(rowView)
     }
 
     /** 点击行号时弹出选择柜子对话框 */
