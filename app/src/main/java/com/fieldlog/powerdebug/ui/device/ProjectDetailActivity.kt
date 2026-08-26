@@ -53,7 +53,6 @@ class ProjectDetailActivity : AppCompatActivity() {
         private const val PREF_NAME = "project_detail_prefs"
         private const val KEY_GRID_VIEW = "grid_view"
         private const val KEY_NAME_MODE = "name_mode"
-        private const val KEY_GRID_SPAN = "grid_span"
         private const val KEY_SORT_MODE = "sort_mode"
         private const val TYPE_LIST = 0
         private const val TYPE_GRID = 1
@@ -74,7 +73,6 @@ class ProjectDetailActivity : AppCompatActivity() {
     private var latestRows: List<InstanceStatusRow> = emptyList()
     private var isGridLayout = false
     private var isShortNameMode = false
-    private var gridSpanCount = 3
     private var sortMode = SORT_CUSTOM
     private var isDragMode = false
 
@@ -99,7 +97,6 @@ class ProjectDetailActivity : AppCompatActivity() {
         val prefs = getSharedPreferences(PREF_NAME, MODE_PRIVATE)
         isGridLayout = prefs.getBoolean(KEY_GRID_VIEW, false)
         isShortNameMode = prefs.getBoolean(KEY_NAME_MODE, false)
-        gridSpanCount = prefs.getInt(KEY_GRID_SPAN, 3).coerceIn(2, 4)
         sortMode = prefs.getInt(KEY_SORT_MODE, SORT_CUSTOM)
 
         lifecycleScope.launch {
@@ -111,7 +108,7 @@ class ProjectDetailActivity : AppCompatActivity() {
             onLongClick = { if (!isDragMode) showInstanceMenu(it.instance) }
         )
         val rv = findViewById<RecyclerView>(R.id.rv_instances)
-        rv.layoutManager = if (isGridLayout) GridLayoutManager(this, gridSpanCount) else LinearLayoutManager(this)
+        rv.layoutManager = if (isGridLayout) GridLayoutManager(this, 4) else LinearLayoutManager(this)
         rv.adapter = adapter
 
         // 拖动排序
@@ -206,7 +203,6 @@ class ProjectDetailActivity : AppCompatActivity() {
         val toggleItem = menu.findItem(R.id.action_toggle_view)
         val dragItem = menu.findItem(R.id.action_drag_sort)
         val nameModeItem = menu.findItem(R.id.action_name_mode)
-        val gridSpanItem = menu.findItem(R.id.action_grid_span)
         val sortItem = menu.findItem(R.id.action_sort)
         val editItem = menu.findItem(R.id.action_edit_project)
         val deleteItem = menu.findItem(R.id.action_delete_project)
@@ -226,7 +222,6 @@ class ProjectDetailActivity : AppCompatActivity() {
             dragItem?.setTitle(R.string.action_drag_sort)
             nameModeItem?.isVisible = true
             nameModeItem?.setTitle(if (isShortNameMode) R.string.action_name_mode_full else R.string.action_name_mode_short)
-            gridSpanItem?.isVisible = isGridLayout
             sortItem?.isVisible = true
             editItem?.isVisible = true
             deleteItem?.isVisible = true
@@ -238,29 +233,12 @@ class ProjectDetailActivity : AppCompatActivity() {
         menu.findItem(R.id.action_sort_name_desc)?.isChecked = sortMode == SORT_NAME_DESC
         menu.findItem(R.id.action_sort_fault_desc)?.isChecked = sortMode == SORT_FAULT_DESC
         menu.findItem(R.id.action_sort_test_desc)?.isChecked = sortMode == SORT_TEST_DESC
-
-        // 网格列数 check 状态 + 标题格式化
-        menu.findItem(R.id.action_grid_span_2)?.apply {
-            isChecked = gridSpanCount == 2
-            setTitle(getString(R.string.grid_span_fmt, 2))
-        }
-        menu.findItem(R.id.action_grid_span_3)?.apply {
-            isChecked = gridSpanCount == 3
-            setTitle(getString(R.string.grid_span_fmt, 3))
-        }
-        menu.findItem(R.id.action_grid_span_4)?.apply {
-            isChecked = gridSpanCount == 4
-            setTitle(getString(R.string.grid_span_fmt, 4))
-        }
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean = when (item.itemId) {
         R.id.action_toggle_view -> { toggleView(); true }
         R.id.action_drag_sort -> { toggleDragMode(); true }
         R.id.action_name_mode -> { toggleNameMode(); true }
-        R.id.action_grid_span_2 -> { setGridSpan(2); true }
-        R.id.action_grid_span_3 -> { setGridSpan(3); true }
-        R.id.action_grid_span_4 -> { setGridSpan(4); true }
         R.id.action_sort_custom -> { setSortMode(SORT_CUSTOM); true }
         R.id.action_sort_name_asc -> { setSortMode(SORT_NAME_ASC); true }
         R.id.action_sort_name_desc -> { setSortMode(SORT_NAME_DESC); true }
@@ -275,7 +253,7 @@ class ProjectDetailActivity : AppCompatActivity() {
         isGridLayout = !isGridLayout
         getSharedPreferences(PREF_NAME, MODE_PRIVATE).edit().putBoolean(KEY_GRID_VIEW, isGridLayout).apply()
         val rv = findViewById<RecyclerView>(R.id.rv_instances)
-        rv.layoutManager = if (isGridLayout) GridLayoutManager(this, gridSpanCount) else LinearLayoutManager(this)
+        rv.layoutManager = if (isGridLayout) GridLayoutManager(this, 4) else LinearLayoutManager(this)
         adapter.notifyDataSetChanged()
         invalidateOptionsMenu()
     }
@@ -313,17 +291,6 @@ class ProjectDetailActivity : AppCompatActivity() {
         isShortNameMode = !isShortNameMode
         getSharedPreferences(PREF_NAME, MODE_PRIVATE).edit().putBoolean(KEY_NAME_MODE, isShortNameMode).apply()
         adapter.notifyDataSetChanged()
-        invalidateOptionsMenu()
-    }
-
-    private fun setGridSpan(span: Int) {
-        gridSpanCount = span
-        getSharedPreferences(PREF_NAME, MODE_PRIVATE).edit().putInt(KEY_GRID_SPAN, span).apply()
-        if (isGridLayout) {
-            val rv = findViewById<RecyclerView>(R.id.rv_instances)
-            rv.layoutManager = GridLayoutManager(this, span)
-            adapter.notifyDataSetChanged()
-        }
         invalidateOptionsMenu()
     }
 
@@ -800,31 +767,13 @@ class ProjectDetailActivity : AppCompatActivity() {
             h.ib.tvGridPending.text = row.pendingTests.toString()
             h.ib.tvGridFaults.text = row.pendingFaults.toString()
 
-            // 根据列数调整显示
+            // 固定4列：紧凑布局
             val res = resources
-            when (gridSpanCount) {
-                2 -> {
-                    h.ib.tvGridName.textSize = 14f
-                    h.ib.tvGridPending.textSize = 16f
-                    h.ib.tvGridFaults.textSize = 16f
-                    h.ib.tvGridLabelPending.text = res.getString(R.string.grid_pending_label)
-                    h.ib.tvGridLabelFaults.text = res.getString(R.string.grid_faults_label)
-                }
-                3 -> {
-                    h.ib.tvGridName.textSize = 13f
-                    h.ib.tvGridPending.textSize = 16f
-                    h.ib.tvGridFaults.textSize = 16f
-                    h.ib.tvGridLabelPending.text = res.getString(R.string.grid_pending_label)
-                    h.ib.tvGridLabelFaults.text = res.getString(R.string.grid_faults_label)
-                }
-                4 -> {
-                    h.ib.tvGridName.textSize = 12f
-                    h.ib.tvGridPending.textSize = 14f
-                    h.ib.tvGridFaults.textSize = 14f
-                    h.ib.tvGridLabelPending.text = res.getString(R.string.grid_label_pending_short)
-                    h.ib.tvGridLabelFaults.text = res.getString(R.string.grid_label_faults_short)
-                }
-            }
+            h.ib.tvGridName.textSize = 12f
+            h.ib.tvGridPending.textSize = 14f
+            h.ib.tvGridFaults.textSize = 14f
+            h.ib.tvGridLabelPending.text = res.getString(R.string.grid_label_pending_short)
+            h.ib.tvGridLabelFaults.text = res.getString(R.string.grid_label_faults_short)
 
             h.ib.root.setOnClickListener { onClick(row) }
             h.ib.root.setOnLongClickListener { onLongClick(row); true }
