@@ -200,12 +200,12 @@ interface InstanceDao {
     suspend fun updateAll(list: List<CabinetInstance>)
 
     /** 批量更新排序值 */
-    @Query("UPDATE instances SET sortOrder = :sortOrder WHERE id = :id")
-    suspend fun updateSortOrder(id: String, sortOrder: Int)
+    @Query("UPDATE instances SET sortOrder = :sortOrder, updatedAt = :now WHERE id = :id")
+    suspend fun updateSortOrder(id: String, sortOrder: Int, now: Long = System.currentTimeMillis())
 
     /** 更新行分组（0=未分组） */
-    @Query("UPDATE instances SET rowGroup = :rowGroup WHERE id = :id")
-    suspend fun updateRowGroup(id: String, rowGroup: Int)
+    @Query("UPDATE instances SET rowGroup = :rowGroup, updatedAt = :now WHERE id = :id")
+    suspend fun updateRowGroup(id: String, rowGroup: Int, now: Long = System.currentTimeMillis())
 
     @Delete
     suspend fun delete(i: CabinetInstance)
