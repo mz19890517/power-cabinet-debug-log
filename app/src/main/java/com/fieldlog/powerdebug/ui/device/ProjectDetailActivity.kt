@@ -212,7 +212,6 @@ class ProjectDetailActivity : AppCompatActivity() {
             toggleItem?.setIcon(R.drawable.ic_list_view)
             dragItem?.setTitle(R.string.drag_sort_done)
             nameModeItem?.isVisible = false
-            gridSpanItem?.isVisible = false
             sortItem?.isVisible = false
             editItem?.isVisible = false
             deleteItem?.isVisible = false
