@@ -107,8 +107,8 @@ class ProjectDetailActivity : AppCompatActivity() {
         }
 
         adapter = InstanceAdapter(
-            onClick = { routeInstanceClick(it.instance) },
-            onLongClick = { showInstanceMenu(it.instance) }
+            onClick = { if (!isDragMode) routeInstanceClick(it.instance) },
+            onLongClick = { if (!isDragMode) showInstanceMenu(it.instance) }
         )
         val rv = findViewById<RecyclerView>(R.id.rv_instances)
         rv.layoutManager = if (isGridLayout) GridLayoutManager(this, gridSpanCount) else LinearLayoutManager(this)
@@ -379,7 +379,8 @@ class ProjectDetailActivity : AppCompatActivity() {
             DeleteSafeguard.confirmDelete(
                 context = this@ProjectDetailActivity,
                 title = R.string.delete,
-                message = getString(R.string.warn_del_project, p.name, cabinets)
+                message = getString(R.string.warn_del_project, p.name, cabinets),
+                typeName = "项目"
             ) {
                 lifecycleScope.launch {
                     App.repo.deleteProject(p.id)
@@ -607,7 +608,8 @@ class ProjectDetailActivity : AppCompatActivity() {
             DeleteSafeguard.confirmDelete(
                 context = this@ProjectDetailActivity,
                 title = R.string.delete,
-                message = getString(R.string.warn_del_instance, inst.name, logs)
+                message = getString(R.string.warn_del_instance, inst.name, logs),
+                typeName = "柜子"
             ) {
                 lifecycleScope.launch { App.repo.deleteInstance(inst.id) }
             }

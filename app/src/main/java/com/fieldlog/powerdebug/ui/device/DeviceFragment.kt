@@ -210,7 +210,8 @@ class DeviceFragment : Fragment() {
         com.fieldlog.powerdebug.util.DeleteSafeguard.confirmDelete(
             context = requireContext(),
             title = R.string.delete,
-            message = getString(R.string.warn_del_project, item.project.name, item.cabinetCount)
+            message = getString(R.string.warn_del_project, item.project.name, item.cabinetCount),
+            typeName = "项目"
         ) {
             viewLifecycleOwner.lifecycleScope.launch { App.repo.deleteProject(item.project.id) }
         }
@@ -265,7 +266,8 @@ class DeviceFragment : Fragment() {
         com.fieldlog.powerdebug.util.DeleteSafeguard.confirmDelete(
             context = requireContext(),
             title = R.string.delete,
-            message = getString(R.string.warn_del_type, item.type.name, item.instanceCount)
+            message = getString(R.string.warn_del_type, item.type.name, item.instanceCount),
+            typeName = "类型"
         ) {
             viewLifecycleOwner.lifecycleScope.launch { App.repo.deleteType(item.type.id) }
         }

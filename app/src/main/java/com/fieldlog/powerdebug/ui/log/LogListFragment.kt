@@ -185,7 +185,8 @@ class LogListFragment : Fragment() {
                 com.fieldlog.powerdebug.util.DeleteSafeguard.confirmDelete(
                     context = requireContext(),
                     title = R.string.delete,
-                    message = "删除「${item.instanceName} · ${item.log.circuit.ifEmpty { getString(R.string.whole_cabinet) }}」这条日志？\n其下故障记录将一并删除。"
+                    message = "删除「${item.instanceName} · ${item.log.circuit.ifEmpty { getString(R.string.whole_cabinet) }}」这条日志？\n其下故障记录将一并删除。",
+                    typeName = "日志"
                 ) {
                     viewLifecycleOwner.lifecycleScope.launch {
                         App.repo.deleteLog(item.log.id, LogDeleteMode.RESTORE_PLANNED)
@@ -205,7 +206,8 @@ class LogListFragment : Fragment() {
                         com.fieldlog.powerdebug.util.DeleteSafeguard.confirmDelete(
                             context = requireContext(),
                             title = R.string.delete,
-                            message = "确认删除并恢复预选待测项？"
+                            message = "确认删除并恢复预选待测项？",
+                            typeName = "日志"
                         ) {
                             viewLifecycleOwner.lifecycleScope.launch {
                                 App.repo.deleteLog(item.log.id, LogDeleteMode.RESTORE_PLANNED)
@@ -217,7 +219,8 @@ class LogListFragment : Fragment() {
                         com.fieldlog.powerdebug.util.DeleteSafeguard.confirmDelete(
                             context = requireContext(),
                             title = R.string.delete,
-                            message = "确认删除并连项删除预选待测项？"
+                            message = "确认删除并连项删除预选待测项？",
+                            typeName = "日志"
                         ) {
                             viewLifecycleOwner.lifecycleScope.launch {
                                 App.repo.deleteLog(item.log.id, LogDeleteMode.PURGE_PLANNED)

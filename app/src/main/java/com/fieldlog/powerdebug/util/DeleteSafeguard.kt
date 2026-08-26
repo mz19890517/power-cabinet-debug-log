@@ -8,7 +8,8 @@ import com.fieldlog.powerdebug.R
 import java.util.Calendar
 
 /**
- * 删除防呆：开启后删除操作需输入当前时间（HHmm）才能确认，防止误触。
+ * 删除防呆：开启后删除操作需输入「当前时间+删除类型」才能确认，防止误触。
+ * 例如删除柜子需输入"1730柜子"，删除项目需输入"1730项目"。
  */
 object DeleteSafeguard {
 
@@ -30,13 +31,13 @@ object DeleteSafeguard {
 
     /**
      * 包装删除确认弹窗。
-     * 防呆关闭：直接弹「确认/取消」，点确认执行 onConfirmed。
-     * 防呆开启：先弹「确认/取消」，点确认后弹时间输入框，输入正确才执行。
+     * @param typeName 删除类型名称，如 "柜子"、"项目"、"类型"、"日志"、"调试员"
      */
     fun confirmDelete(
         context: Context,
         title: Int,
         message: String,
+        typeName: String,
         onConfirmed: () -> Unit
     ) {
         val base = AlertDialog.Builder(context)
@@ -52,16 +53,16 @@ object DeleteSafeguard {
         }
 
         base.setPositiveButton(R.string.confirm) { _, _ ->
-            showTimeVerify(context, onConfirmed)
+            showTimeVerify(context, typeName, onConfirmed)
         }
         base.show()
     }
 
-    private fun showTimeVerify(context: Context, onConfirmed: () -> Unit) {
-        val expected = currentTimeStr()
+    private fun showTimeVerify(context: Context, typeName: String, onConfirmed: () -> Unit) {
+        val expected = currentTimeStr() + typeName
         val et = EditText(context).apply {
             hint = context.getString(R.string.safeguard_time_hint, expected)
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            inputType = android.text.InputType.TYPE_CLASS_TEXT
             setPadding(48, 32, 48, 16)
         }
         AlertDialog.Builder(context)

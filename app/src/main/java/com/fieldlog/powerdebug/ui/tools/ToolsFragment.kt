@@ -452,7 +452,8 @@ class ToolsFragment : Fragment() {
         com.fieldlog.powerdebug.util.DeleteSafeguard.confirmDelete(
             context = requireContext(),
             title = R.string.debugger_delete,
-            message = getString(R.string.debugger_delete_confirm, d.name)
+            message = getString(R.string.debugger_delete_confirm, d.name),
+            typeName = "调试员"
         ) {
             viewLifecycleOwner.lifecycleScope.launch {
                 App.repo.deleteDebugger(d.id)
