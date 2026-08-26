@@ -413,6 +413,9 @@ interface PlannedItemDao {
     @Query("SELECT * FROM planned_items WHERE id IN (:ids)")
     suspend fun byIdsOnce(ids: List<String>): List<PlannedItem>
 
+    @Query("SELECT * FROM planned_items WHERE id = :id LIMIT 1")
+    suspend fun getByIdOnce(id: String): PlannedItem?
+
     /** 开始测试清单：启用且尚未通过(含上次未通过，供复测) */
     @Query(
         """SELECT * FROM planned_items WHERE instanceId = :instanceId AND enabled = 1 AND result <> 1 

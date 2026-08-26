@@ -326,7 +326,7 @@ class TestChecklistActivity : AppCompatActivity() {
             .show()
     }
 
-    /** 驳回通过对话框：输入故障原因 */
+    /** 驳回通过对话框：输入故障原因 + 删除通过日志 + 重置为未测 */
     private fun showRejectPassDialog(item: PlannedItem) {
         val et = EditText(this).apply {
             hint = getString(R.string.fault_multi_input_hint)
@@ -348,10 +348,22 @@ class TestChecklistActivity : AppCompatActivity() {
                     Toast.makeText(this, R.string.err_symptom_empty, Toast.LENGTH_SHORT).show()
                     return@setPositiveButton
                 }
-                failNotes[item.id] = faults.joinToString("\n")
-                passIds.remove(item.id)
-                adapter.notifyDataSetChanged()
-                refreshCount()
+                lifecycleScope.launch {
+                    App.repo.rejectPassedItem(item)
+                    failNotes[item.id] = faults.joinToString("\n")
+                    passIds.remove(item.id)
+                    // 重新加载数据：通过项删除后应出现在未测列表
+                    val pending = App.db.plannedItemDao().pendingForTestOnce(instanceId)
+                    passedItems.clear()
+                    passedItems.addAll(
+                        App.db.plannedItemDao().allOfInstanceOnce(instanceId)
+                            .filter { it.enabled && it.result == PlannedItem.RESULT_PASS }
+                    )
+                    adapter.submit(pending)
+                    pendingTotal = pending.size
+                    adapter.notifyDataSetChanged()
+                    refreshCount()
+                }
             }
             .setNegativeButton(R.string.cancel, null)
             .show()

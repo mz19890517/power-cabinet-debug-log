@@ -520,6 +520,29 @@ class Repository(private val db: AppDatabase) {
         faultDao.unpassSingle(faultId)
     }
 
+    /** 驳回已通过的测试项：删除通过日志 + 删除关联故障 + 重置PlannedItem为未测 */
+    suspend fun rejectPassedItem(item: PlannedItem) {
+        val t = now()
+        val p = plannedDao.getByIdOnce(item.id) ?: return
+        if (p.result != PlannedItem.RESULT_PASS) return
+        val logId = p.logId
+        db.withTransaction {
+            if (logId.isNotEmpty()) {
+                val log = logDao.getByIdOnce(logId)
+                if (log != null) {
+                    markDeleted(DeletedItem.TBL_LOGS, logId, t)
+                    logDao.delete(log)
+                }
+                val faults = faultDao.forLogOnce(logId)
+                for (f in faults) {
+                    markDeleted(DeletedItem.TBL_FAULTS, f.id, t)
+                }
+                faultDao.deleteForLog(logId)
+            }
+            plannedDao.setResult(listOf(p.id), PlannedItem.RESULT_UNTESTED, 0L, "", "")
+        }
+    }
+
     /**
      * 获取某测试项的历史流水（测试流程+故障），按时间排序。
      * 用于已通过项点击时的时间线对话框。
