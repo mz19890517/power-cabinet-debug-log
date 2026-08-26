@@ -215,6 +215,10 @@
     <string name="debugger_renamed">已改名：%1$s</string>
     <string name="debugger_deleted">已删除：%1$s（历史日志保留原姓名）</string>
     <string name="debugger_delete_confirm">删除调试员「%1$s」？\n历史日志不受影响，仍显示原姓名。</string>
+    <string name="debugger_bind_local">绑定本机调试员</string>
+    <string name="debugger_bound_local">已绑定为本机调试员：%1$s</string>
+    <string name="debugger_current_label">本机调试员</string>
+    <string name="debugger_pick_first">请先绑定本机当前调试员（点顶部信息行切换）</string>
     <string name="close">关闭</string>
     <string name="tester_pick_title">选择调试员</string>
     <string name="tester_pick_hint">点击选择调试员</string>
@@ -255,4 +259,20 @@
     <string name="pull_confirm_title">覆盖确认</string>
     <string name="pull_confirm_msg">将用来源柜「%1$s」的 %2$d 项启用待测，整体覆盖本柜现有 %3$d 项。\n\n本柜旧清单会被删除并同步到团队其他手机。确定？</string>
     <string name="pull_done_fmt">已拉取 %1$d 项 ✓（原清单已覆盖）</string>
+
+    <!-- 导出筛选（v2.14） -->
+    <string name="export_filter_title">导出筛选</string>
+    <string name="export_filter_status_label">日志状态</string>
+    <string name="export_filter_all">全部</string>
+    <string name="export_filter_has_fault">仅含故障</string>
+    <string name="export_filter_pass_only">仅通过</string>
+    <string name="export_filter_testers_label">测试人员</string>
+    <string name="export_filter_testers_all">全部人员</string>
+    <string name="export_filter_date_label">日期范围</string>
+    <string name="export_filter_date_from_hint">起始日期（可选）</string>
+    <string name="export_filter_date_to_hint">结束日期（可选）</string>
+    <string name="export_filter_log_cols_label">调试日志列</string>
+    <string name="export_filter_fault_cols_label">故障记录列</string>
+    <string name="export_filter_cols_hint">不勾选=全部列导出</string>
+    <string name="export_filter_no_testers">暂无调试员</string>
 </resources>

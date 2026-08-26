@@ -23,8 +23,10 @@ import com.fieldlog.powerdebug.R
 import com.fieldlog.powerdebug.core.ExportSheets
 import com.fieldlog.powerdebug.core.WebDavClient
 import com.fieldlog.powerdebug.core.XlsxWriter
+import com.fieldlog.powerdebug.data.ExportFilter
 import com.fieldlog.powerdebug.data.Repository
 import com.fieldlog.powerdebug.data.db.TesterAccount
+import com.fieldlog.powerdebug.ui.FilterDialogHelper
 import com.fieldlog.powerdebug.databinding.FragmentToolsBinding
 import com.fieldlog.powerdebug.util.CrashLog
 import com.fieldlog.powerdebug.util.DT
@@ -40,9 +42,12 @@ class ToolsFragment : Fragment() {
     private var _b: FragmentToolsBinding? = null
     private val b get() = _b!!
 
+    /** 当前导出筛选条件（跨次点击保持） */
+    private var currentFilter = ExportFilter()
+
     private val exportLauncher = registerForActivityResult(
         ActivityResultContracts.CreateDocument(XLSX_MIME)
-    ) { uri -> uri?.let { doExport(it) } }
+    ) { uri -> uri?.let { doExport(it, currentFilter) } }
 
     private val backupLauncher = registerForActivityResult(
         ActivityResultContracts.CreateDocument(JSON_MIME)
@@ -61,7 +66,10 @@ class ToolsFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         b.btnExport.setOnClickListener {
-            exportLauncher.launch("电源柜调试日志_${DT.fileStamp()}.xlsx")
+            FilterDialogHelper.show(requireContext(), viewLifecycleOwner.lifecycleScope, currentFilter) { filter ->
+                currentFilter = filter
+                exportLauncher.launch("电源柜调试日志_${DT.fileStamp()}.xlsx")
+            }
         }
         b.btnBackup.setOnClickListener {
             backupLauncher.launch("电源柜调试备份_${DT.fileStamp()}.json")
@@ -143,6 +151,7 @@ class ToolsFragment : Fragment() {
         super.onResume()
         refreshStats()
         refreshAccountUI()
+        refreshCurrentDebuggerUI()
     }
 
     override fun onDestroyView() {
@@ -167,6 +176,32 @@ class ToolsFragment : Fragment() {
             b.tvDebuggers.text =
                 if (roster.isEmpty()) getString(R.string.debugger_summary_empty)
                 else getString(R.string.debugger_summary, roster.size, roster.joinToString("、") { it.name })
+        }
+    }
+
+    /** 刷新当前调试员显示行；点击可快速切换（无需密码） */
+    private fun refreshCurrentDebuggerUI() {
+        val cur = SyncStore.currentDebugger(requireContext())
+        b.tvCurrentDebugger.text = cur.ifEmpty { getString(R.string.debugger_none_set) }
+        b.tvCurrentDebugger.setOnClickListener {
+            viewLifecycleOwner.lifecycleScope.launch {
+                val roster = App.repo.debuggers()
+                if (roster.isEmpty()) {
+                    toast("请先添加调试员名单"); return@launch
+                }
+                val names = roster.map { it.name }.toTypedArray()
+                val checked = names.indexOf(cur).coerceAtLeast(0)
+                Builder(requireContext())
+                    .setTitle(R.string.debugger_switch_title)
+                    .setSingleChoiceItems(names, checked) { dlg, which ->
+                        SyncStore.setCurrentDebugger(requireContext(), names[which])
+                        toast(getString(R.string.debugger_bound_local, names[which]))
+                        refreshCurrentDebuggerUI()
+                        dlg.dismiss()
+                    }
+                    .setNegativeButton(R.string.cancel, null)
+                    .show()
+            }
         }
     }
 
@@ -346,16 +381,24 @@ class ToolsFragment : Fragment() {
         }
     }
 
-    /** 单个调试员操作菜单 */
+    /** 单个调试员操作菜单：改名 / 删除 / 绑定本机 */
     private fun showDebuggerItemMenu(d: com.fieldlog.powerdebug.data.db.Debugger) {
+        val items = arrayOf(
+            getString(R.string.debugger_rename),
+            getString(R.string.debugger_delete),
+            getString(R.string.debugger_bind_local)
+        )
         Builder(requireContext())
             .setTitle(d.name)
-            .setItems(
-                arrayOf(getString(R.string.debugger_rename), getString(R.string.debugger_delete))
-            ) { _, which ->
+            .setItems(items) { _, which ->
                 when (which) {
                     0 -> showDebuggerEditDialog(d)
                     1 -> confirmDeleteDebugger(d)
+                    2 -> {
+                        SyncStore.setCurrentDebugger(requireContext(), d.name)
+                        toast(getString(R.string.debugger_bound_local, d.name))
+                        refreshCurrentDebuggerUI()
+                    }
                 }
             }
             .setNegativeButton(R.string.cancel, null)
@@ -391,9 +434,7 @@ class ToolsFragment : Fragment() {
                             name
                         )
                     )
-                    dlg.dismiss()
-                    refreshAccountUI()
-                    showDebuggerManager()
+                    showDebuggerManager() // 回到名单管理
                 } else {
                     toast(getString(R.string.debugger_exists))
                 }
@@ -435,13 +476,17 @@ class ToolsFragment : Fragment() {
     private fun toast(resId: Int) =
         Toast.makeText(requireContext(), resId, Toast.LENGTH_LONG).show()
 
-    private fun doExport(uri: Uri) {
+    private fun doExport(uri: Uri, filter: ExportFilter) {
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                val (logs, faults) = App.repo.collectExport()
+                val (logs, faults) = App.repo.collectExport(filter)
                 withContext(Dispatchers.IO) {
                     requireContext().contentResolver.openOutputStream(uri)?.use { out ->
-                        XlsxWriter.write(out, ExportSheets.build(requireContext(), logs, faults))
+                        XlsxWriter.write(out, ExportSheets.build(
+                            requireContext(), logs, faults,
+                            logColumns = filter.logColumns,
+                            faultColumns = filter.faultColumns
+                        ))
                     } ?: throw IllegalStateException("无法打开输出流")
                 }
                 toast(getString(R.string.export_ok, uri.lastPathSegment ?: ""))

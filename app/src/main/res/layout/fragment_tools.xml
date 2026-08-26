@@ -208,6 +208,28 @@
                     android:text="@string/sync_log_view" />
 
                 <TextView
+                    android:id="@+id/tv_current_debugger_label"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="@string/debugger_current_label"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="11sp" />
+
+                <TextView
+                    android:id="@+id/tv_current_debugger"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:background="?attr/selectableItemBackground"
+                    android:paddingStart="2dp"
+                    android:paddingTop="4dp"
+                    android:paddingEnd="2dp"
+                    android:paddingBottom="4dp"
+                    android:textColor="?attr/colorPrimary"
+                    android:textSize="13sp" />
+
+                <TextView
                     android:id="@+id/tv_debuggers"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"

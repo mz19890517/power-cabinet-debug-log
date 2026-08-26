@@ -16,7 +16,9 @@ import com.fieldlog.powerdebug.App
 import com.fieldlog.powerdebug.R
 import com.fieldlog.powerdebug.core.ExportSheets
 import com.fieldlog.powerdebug.core.XlsxWriter
+import com.fieldlog.powerdebug.data.ExportFilter
 import com.fieldlog.powerdebug.data.db.ProjectListItem
+import com.fieldlog.powerdebug.ui.FilterDialogHelper
 import com.fieldlog.powerdebug.data.db.TypeListItem
 import com.fieldlog.powerdebug.databinding.FragmentDeviceBinding
 import com.fieldlog.powerdebug.databinding.ItemSimpleCardBinding
@@ -129,22 +131,30 @@ class DeviceFragment : Fragment() {
     // ---------- 项目定向导出 ----------
 
     private var exportProjectId = ""
+    private var currentProjectFilter = ExportFilter()
     private val exportLauncher = registerForActivityResult(
         ActivityResultContracts.CreateDocument(XLSX_MIME)
     ) { uri -> uri?.let { doExportProject(it) } }
 
     private fun requestExportProject(item: ProjectListItem) {
         exportProjectId = item.project.id
-        exportLauncher.launch("电源柜调试日志_${item.project.name}_${DT.fileStamp()}.xlsx")
+        FilterDialogHelper.show(requireContext(), viewLifecycleOwner.lifecycleScope, currentProjectFilter) { filter ->
+            currentProjectFilter = filter
+            exportLauncher.launch("电源柜调试日志_${item.project.name}_${DT.fileStamp()}.xlsx")
+        }
     }
 
     private fun doExportProject(uri: android.net.Uri) {
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                val (logs, faults) = App.repo.collectExportOf(projectId = exportProjectId)
+                val (logs, faults) = App.repo.collectExportOf(projectId = exportProjectId, filter = currentProjectFilter)
                 withContext(Dispatchers.IO) {
                     requireContext().contentResolver.openOutputStream(uri)?.use { out ->
-                        XlsxWriter.write(out, ExportSheets.build(requireContext(), logs, faults))
+                        XlsxWriter.write(out, ExportSheets.build(
+                            requireContext(), logs, faults,
+                            logColumns = currentProjectFilter.logColumns,
+                            faultColumns = currentProjectFilter.faultColumns
+                        ))
                     } ?: throw IllegalStateException("无法打开输出流")
                 }
                 Toast.makeText(

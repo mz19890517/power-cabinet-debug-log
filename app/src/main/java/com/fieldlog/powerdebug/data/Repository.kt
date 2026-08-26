@@ -544,26 +544,56 @@ class Repository(private val db: AppDatabase) {
         pendingFaults = faultDao.countPending()
     )
 
-    suspend fun collectExport(): Pair<List<LogListItem>, List<FaultExportRow>> =
-        logDao.exportAll() to faultDao.exportAll()
+    suspend fun collectExport(filter: ExportFilter = ExportFilter()): Pair<List<LogListItem>, List<FaultExportRow>> {
+        var (logs, faults) = logDao.exportAll() to faultDao.exportAll()
+        // 状态筛选
+        if (filter.status != null) {
+            when (filter.status) {
+                0 -> { // 含故障
+                    val logIds = faults.map { it.fault.logId }.toSet()
+                    logs = logs.filter { it.log.id in logIds }
+                }
+                1 -> { // 仅通过（pendingCount=0 且 resolvedCount=0）
+                    logs = logs.filter { it.pendingCount == 0 && it.resolvedCount == 0 }
+                }
+            }
+        }
+        // 测试人员筛选
+        if (filter.testers.isNotEmpty()) {
+            logs = logs.filter { it.log.tester in filter.testers }
+        }
+        // 日期范围筛选
+        if (filter.dateFrom > 0) logs = logs.filter { it.log.createdAt >= filter.dateFrom }
+        if (filter.dateTo > 0) logs = logs.filter { it.log.createdAt <= filter.dateTo }
+        // 故障表跟随日志筛选结果
+        val logIds = logs.map { it.log.id }.toSet()
+        faults = faults.filter { it.fault.logId in logIds }
+        return logs to faults
+    }
 
     /**
      * 范围导出：按项目（全部柜子）或单个柜子过滤日志与故障。
      * 两个参数都为空 = 全量导出。用于项目卡/柜子长按菜单的定向导出。
+     * @param filter 可选筛选条件（状态/人员/日期/列选择）
      */
-    suspend fun collectExportOf(projectId: String = "", instanceId: String = ""):
+    suspend fun collectExportOf(
+        projectId: String = "",
+        instanceId: String = "",
+        filter: ExportFilter = ExportFilter()
+    ):
         Pair<List<LogListItem>, List<FaultExportRow>> {
-        val (logs, faults) = collectExport()
-        if (projectId.isBlank() && instanceId.isBlank()) return logs to faults
+        // 先应用筛选条件
+        val (filteredLogs, filteredFaults) = collectExport(filter)
+        if (projectId.isBlank() && instanceId.isBlank()) return filteredLogs to filteredFaults
         // LogListItem 无 projectId 字段，经实例归属换算
         val instIds = if (projectId.isNotBlank())
             instanceDao.byProjectOnce(projectId).map { it.id }.toSet() else null
-        val ls = logs.filter {
+        val ls = filteredLogs.filter {
             (instIds == null || it.log.instanceId in instIds) &&
                 (instanceId.isBlank() || it.log.instanceId == instanceId)
         }
         val logIds = ls.map { it.log.id }.toSet()
-        val fs = faults.filter { it.fault.logId in logIds }
+        val fs = filteredFaults.filter { it.fault.logId in logIds }
         return ls to fs
     }
 

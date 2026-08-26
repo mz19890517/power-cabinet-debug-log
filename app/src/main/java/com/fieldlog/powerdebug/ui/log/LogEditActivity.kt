@@ -245,8 +245,25 @@ class LogEditActivity : AppCompatActivity() {
     private suspend fun currentTypeId(): String =
         App.repo.getInstance(selInstanceId)?.typeId ?: ""
 
-    /** 测试人员栏点击：从调试员名单中选人 */
+    /**
+     * 测试人员栏点击：从调试员名单中选人。
+     * 逻辑：当前已绑定本机调试员时，要换人需输入超管口令；
+     * 首次使用（当前为空）直接绑定，无需密码。
+     */
     private fun showTesterPicker() {
+        val curBound = SyncStore.currentDebugger(this)
+        val curPicked = b.etTester.text?.toString()?.trim().orEmpty()
+        // 如果已有绑定且当前选的不是绑定的人 → 要换人需密码验证
+        if (curBound.isNotEmpty() && curPicked != curBound) {
+            showPasswordGate {
+                launchPicker()
+            }
+        } else {
+            launchPicker()
+        }
+    }
+
+    private fun launchPicker() {
         lifecycleScope.launch {
             val names = App.repo.debuggers().map { it.name }
             if (names.isEmpty()) {
@@ -265,6 +282,29 @@ class LogEditActivity : AppCompatActivity() {
                 }
                 .setNegativeButton(R.string.cancel, null)
                 .show()
+        }
+    }
+
+    private fun showPasswordGate(onPass: () -> Unit) {
+        val dlgView = layoutInflater.inflate(R.layout.dialog_single_input, null)
+        val et = dlgView.findViewById<EditText>(R.id.et_input)
+        et.hint = getString(R.string.debugger_gate_hint)
+        et.inputType = android.text.InputType.TYPE_CLASS_TEXT or
+            android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        val dlg = AlertDialog.Builder(this)
+            .setTitle(R.string.debugger_gate_title)
+            .setMessage(R.string.debugger_gate_msg)
+            .setView(dlgView)
+            .setPositiveButton(R.string.confirm, null)
+            .setNegativeButton(R.string.cancel, null)
+            .create()
+        dlg.show()
+        dlg.getButton(AlertDialog.BUTTON_POSITIVE)?.setOnClickListener {
+            if (et.text?.toString()?.trim() == SyncStore.SUPER_PASSWORD) {
+                dlg.dismiss(); onPass()
+            } else {
+                Toast.makeText(this, R.string.debugger_gate_wrong, Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
