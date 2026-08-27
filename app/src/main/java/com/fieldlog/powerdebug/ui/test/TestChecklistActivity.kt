@@ -534,7 +534,7 @@ class TestChecklistActivity : AppCompatActivity() {
             val faultSummary = when {
                 markedFail && faultCount == 1 -> faultText?.trim() ?: ""
                 markedFail && faultCount > 1 -> getString(R.string.fault_count_fmt, faultCount)
-                !markedFail && item.result == PlannedItem.RESULT_FAIL && item.faultId.isNotBlank() -> {
+                !markedFail && item.faultId.isNotBlank() -> {
                     val ids = item.faultId.split(",").filter { it.isNotEmpty() }
                     if (ids.size == 1) "上次未通过：${lastReasons[ids[0]] ?: "原因见日志"}"
                     else "上次未通过：${ids.size}条故障"
@@ -585,7 +585,7 @@ class TestChecklistActivity : AppCompatActivity() {
                 alpha = if (markedFail) 1f else 0.55f
                 text = if (markedFail) "✗ 已记" else getString(R.string.btn_fail)
                 setOnClickListener {
-                    if (markedFail || item.result == PlannedItem.RESULT_FAIL && item.faultId.isNotBlank()) {
+                    if (markedFail || item.faultId.isNotBlank()) {
                         showFaultListDialog(item)
                     } else {
                         showMultiFaultDialog(item)
@@ -597,7 +597,7 @@ class TestChecklistActivity : AppCompatActivity() {
             h.tvText.setOnClickListener {
                 when {
                     markedFail -> showFaultListDialog(item)
-                    item.result == PlannedItem.RESULT_FAIL && item.faultId.isNotBlank() -> showFaultListDialog(item)
+                    item.faultId.isNotBlank() -> showFaultListDialog(item)
                 }
             }
         }
