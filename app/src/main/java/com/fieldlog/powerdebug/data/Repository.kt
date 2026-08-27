@@ -345,7 +345,8 @@ class Repository(private val db: AppDatabase) {
                     for (f in matchedFaults) {
                         faultDao.unpassSingle(f.id)
                     }
-                    plannedDao.resetByInstanceAndContent(l.instanceId, l.testContent, now())
+                    // 检测未消除故障 → 驳回重测
+                    revertPlannedIfHasFaults(l.instanceId, l.testContent)
                     markDeleted(DeletedItem.TBL_LOGS, l.id)
                     logDao.delete(l)
                 }
@@ -362,11 +363,33 @@ class Repository(private val db: AppDatabase) {
                         markDeleted(DeletedItem.TBL_FAULTS, f.id)
                     }
                     faultDao.deleteAll(matchedFaults)
-                    plannedDao.resetByInstanceAndContent(l.instanceId, l.testContent, now())
+                    // 检测未消除故障 → 驳回重测
+                    revertPlannedIfHasFaults(l.instanceId, l.testContent)
                     markDeleted(DeletedItem.TBL_LOGS, l.id)
                     logDao.delete(l)
                 }
             }
+        }
+    }
+
+    /**
+     * 删除日志后检测：若该测试项仍有未消除故障，驳回PlannedItem为未测，并写回faultId。
+     * 这样测试列表会显示该测试项有故障，用户可在故障列表中操作。
+     */
+    private suspend fun revertPlannedIfHasFaults(instanceId: String, content: String) {
+        val pendingFaults = faultDao.pendingByInstanceAndContent(instanceId, content)
+        if (pendingFaults.isNotEmpty()) {
+            // 找到对应的PlannedItem
+            val items = plannedDao.byInstanceAndContentOnce(instanceId, content)
+            val faultIdStr = pendingFaults.joinToString(",") { it.id }
+            for (item in items) {
+                plannedDao.setResult(
+                    listOf(item.id), PlannedItem.RESULT_UNTESTED, 0L, "", faultIdStr
+                )
+            }
+        } else {
+            // 没有未消除故障，正常重置
+            plannedDao.resetByInstanceAndContent(instanceId, content, now())
         }
     }
 
