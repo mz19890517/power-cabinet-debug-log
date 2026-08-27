@@ -508,7 +508,8 @@ class Repository(private val db: AppDatabase) {
             for (item in items) {
                 val itemId = item.id
 
-                // 1. 新增故障 → 每条单独生成故障日志(logType=1)
+                // 1. 新增故障 → 每条单独生成故障日志(logType=1)【必须先创建】
+                val newlyCreatedFaults = mutableListOf<Pair<String, FaultRecord>>() // (symptom, record)
                 val newFaults = failItems[itemId]
                 if (!newFaults.isNullOrEmpty()) {
                     val faultIds = mutableListOf<String>()
@@ -530,6 +531,7 @@ class Repository(private val db: AppDatabase) {
                         )
                         faultDao.insert(f)
                         faultIds.add(f.id)
+                        newlyCreatedFaults.add(symptom.trim() to f)
                     }
                     plannedDao.setResult(
                         listOf(itemId), PlannedItem.RESULT_FAIL, t, "",
@@ -541,10 +543,16 @@ class Repository(private val db: AppDatabase) {
                 }
 
                 // 2. 已消除故障 → 每条单独生成消除日志(logType=2)
+                //    先尝试按faultId查找（DB中已有的故障），找不到则按symptom匹配新创建的故障
                 val resolved = resolvedFaults[itemId]
                 if (!resolved.isNullOrEmpty()) {
                     for (faultId in resolved) {
-                        val fr = faultDao.byIdsOnce(listOf(faultId)).firstOrNull() ?: continue
+                        var fr = faultDao.byIdsOnce(listOf(faultId)).firstOrNull()
+                        // 新创建的故障可能没有DB ID，按symptom匹配
+                        if (fr == null) {
+                            fr = newlyCreatedFaults.find { it.first == faultId }?.second
+                        }
+                        if (fr == null) continue
                         val resolutionLog = DebugLog(
                             id = newId(), instanceId = instanceId, circuit = "",
                             logType = DebugLog.LOG_TYPE_RESOLUTION,
@@ -553,10 +561,13 @@ class Repository(private val db: AppDatabase) {
                             createdBy = actor, updatedBy = actor, createdAt = t, updatedAt = t
                         )
                         logDao.insert(resolutionLog)
-                        faultDao.passSingle(faultId, t)
+                        faultDao.passSingle(fr.id, t)
                     }
                     // 如果该项所有故障都已解决 → 设为通过
-                    val remaining = faultDao.byIdsOnce(resolved).count { it.status == FaultRecord.STATUS_PENDING }
+                    val remainingFaultIds = mutableListOf<String>()
+                    remainingFaultIds.addAll(item.faultId.split(",").filter { it.isNotEmpty() })
+                    remainingFaultIds.addAll(newlyCreatedFaults.map { it.second.id })
+                    val remaining = faultDao.byIdsOnce(remainingFaultIds).count { it.status == FaultRecord.STATUS_PENDING }
                     if (remaining == 0) {
                         plannedDao.setResult(listOf(itemId), PlannedItem.RESULT_PASS, t, "", "")
                     }
@@ -564,10 +575,26 @@ class Repository(private val db: AppDatabase) {
 
                 // 3. 通过项 → 生成通过日志(logType=0)
                 if (itemId in passIds) {
-                    // 通过前自动解决旧故障
+                    // 通过前自动解决旧故障，并为每条生成消除日志
                     if (item.faultId.isNotEmpty()) {
                         val prevFaultIds = item.faultId.split(",").filter { it.isNotEmpty() }
-                        if (prevFaultIds.isNotEmpty()) faultDao.resolveByIds(prevFaultIds, t)
+                        if (prevFaultIds.isNotEmpty()) {
+                            val prevFaults = faultDao.byIdsOnce(prevFaultIds)
+                            for (pf in prevFaults) {
+                                if (pf.status == FaultRecord.STATUS_PENDING) {
+                                    // 生成消除日志
+                                    val resolutionLog = DebugLog(
+                                        id = newId(), instanceId = instanceId, circuit = "",
+                                        logType = DebugLog.LOG_TYPE_RESOLUTION,
+                                        testContent = item.content, tester = tester,
+                                        remark = pf.symptom,
+                                        createdBy = actor, updatedBy = actor, createdAt = t, updatedAt = t
+                                    )
+                                    logDao.insert(resolutionLog)
+                                }
+                            }
+                            faultDao.resolveByIds(prevFaultIds, t)
+                        }
                     }
                     val passLog = DebugLog(
                         id = newId(), instanceId = instanceId, circuit = "",
@@ -588,9 +615,21 @@ class Repository(private val db: AppDatabase) {
 
     suspend fun faultsOf(logId: String) = faultDao.forLogOnce(logId)
 
-    /** 获取某柜某测试项的所有故障记录（通过log.testContent匹配故障日志） */
-    suspend fun faultsForTestItem(instanceId: String, content: String): List<FaultRecord> =
-        faultDao.byInstanceAndContentOnce(instanceId, content)
+    /** 获取某柜某测试项的所有故障记录（通过log.testContent匹配 + faultId直接查询） */
+    suspend fun faultsForTestItem(instanceId: String, content: String, faultIdStr: String = ""): List<FaultRecord> {
+        val byLog = faultDao.byInstanceAndContentOnce(instanceId, content).toMutableList()
+        // 补充：直接通过faultId查找（消除日志删除后恢复场景）
+        if (faultIdStr.isNotBlank()) {
+            val ids = faultIdStr.split(",").filter { it.isNotEmpty() }
+            if (ids.isNotEmpty()) {
+                val byId = faultDao.byFaultIdsOnce(ids).map { it.id }.toSet()
+                faultDao.byFaultIdsOnce(ids).forEach { f ->
+                    if (f.id !in byLog.map { it.id }) byLog.add(f)
+                }
+            }
+        }
+        return byLog
+    }
 
     /** 按id列表查询故障记录（TestChecklistActivity故障列表用） */
     suspend fun faultsByIds(ids: List<String>): List<FaultRecord> = faultDao.byIdsOnce(ids)

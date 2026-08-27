@@ -397,7 +397,7 @@ interface FaultRecordDao {
     @Query("UPDATE fault_records SET status = 0, resolvedAt = 0, updatedAt = :t WHERE id = :id AND status = 1")
     suspend fun unpassSingle(id: String, t: Long = System.currentTimeMillis())
 
-    /** 查某柜某测试项名称关联的故障记录（通过log.testContent匹配） */
+    /** 查某柜某测试项名称关联的故障记录（优先通过log.testContent匹配，无日志时直接查faultId） */
     @Query(
         """SELECT f.* FROM fault_records f
         INNER JOIN debug_logs l ON f.logId = l.id
@@ -405,6 +405,10 @@ interface FaultRecordDao {
         ORDER BY f.occurredAt"""
     )
     suspend fun byInstanceAndContentOnce(instanceId: String, content: String): List<FaultRecord>
+
+    /** 查某柜关联的故障记录（通过PlannedItem.faultId直接查询，用于消除日志删除后恢复场景） */
+    @Query("SELECT * FROM fault_records WHERE id IN (:faultIds) ORDER BY occurredAt")
+    suspend fun byFaultIdsOnce(faultIds: List<String>): List<FaultRecord>
 
     @Query("SELECT COUNT(*) FROM fault_records WHERE status = 0")
     suspend fun countPending(): Int

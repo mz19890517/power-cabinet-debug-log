@@ -321,7 +321,7 @@ class TestChecklistActivity : AppCompatActivity() {
      */
     private fun showFaultListDialog(item: PlannedItem) {
         lifecycleScope.launch {
-            val dbFaults = App.repo.faultsForTestItem(instanceId, item.content)
+            val dbFaults = App.repo.faultsForTestItem(instanceId, item.content, item.faultId)
             if (dbFaults.isEmpty() && failNotes[item.id].isNullOrBlank()) {
                 Toast.makeText(this@TestChecklistActivity, R.string.fault_list_empty, Toast.LENGTH_SHORT).show()
                 return@launch
