@@ -4,6 +4,7 @@ import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.Paint
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -12,6 +13,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -26,11 +28,11 @@ import com.fieldlog.powerdebug.util.SyncStore
 import kotlinx.coroutines.launch
 
 /**
- * 「开始测试」现场模式：
- * - 未测项：点通过→直接通过；点问题→弹多故障输入对话框；点文字→无操作
- * - 有故障项：点通过→直接通过并消除故障；点问题/点文字→弹故障列表对话框（每条可单独通过）
- * - 已通过项（历史）：点文字→弹测试流程+历史故障时间线；长按→弹菜单→驳回
- * - 生成日志：每个测试项独立一条日志（不再合并）
+ * 「开始测试」现场模式（v2.18 重构）：
+ * - 所有操作（添加故障/消除故障/通过）均暂存本地状态
+ * - 点击「生成日志」按钮才统一逐条独立生成日志（永不合并）
+ * - 返回上级时如有未保存操作，弹窗提醒是否保存
+ * - 已通过项：点文字→时间线；长按→驳回菜单
  */
 class TestChecklistActivity : AppCompatActivity() {
 
@@ -41,14 +43,29 @@ class TestChecklistActivity : AppCompatActivity() {
     }
 
     private var instanceId = ""
-    private val passIds = mutableSetOf<String>()
-    private val failNotes = mutableMapOf<String, String>() // itemId -> 换行分隔的多条故障现象
-    private val lastReasons = mutableMapOf<String, String>() // 上次未通过的原因（faultId->symptom）
+
+    // 暂存状态
+    private val passIds = mutableSetOf<String>()                    // 通过的测试项ID
+    private val failNotes = mutableMapOf<String, String>()          // itemId -> 故障原因(换行分隔)
+    private val resolvedFaultIds = mutableMapOf<String, MutableList<String>>() // itemId -> [faultId, ...]
+    private val lastReasons = mutableMapOf<String, String>()        // faultId -> symptom（DB缓存）
+
     private val passedItems = mutableListOf<PlannedItem>()
     private lateinit var adapter: CheckAdapter
     private lateinit var tvCount: TextView
     private lateinit var btnGenerate: Button
     private lateinit var tvInfo: TextView
+
+    private val backCallback = object : OnBackPressedCallback(true) {
+        override fun handleOnBackPressed() {
+            if (hasUnsavedChanges()) {
+                showUnsavedDialog()
+            } else {
+                isEnabled = false
+                onBackPressedDispatcher.onBackPressed()
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -56,7 +73,10 @@ class TestChecklistActivity : AppCompatActivity() {
 
         setSupportActionBar(findViewById(R.id.toolbar))
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
-        findViewById<androidx.appcompat.widget.Toolbar>(R.id.toolbar).setNavigationOnClickListener { finish() }
+        findViewById<androidx.appcompat.widget.Toolbar>(R.id.toolbar)
+            .setNavigationOnClickListener { onBackPressedDispatcher.onBackPressed() }
+
+        onBackPressedDispatcher.addCallback(this, backCallback)
 
         instanceId = intent.getStringExtra("instance_id").orEmpty()
         tvCount = findViewById(R.id.tv_count)
@@ -71,6 +91,10 @@ class TestChecklistActivity : AppCompatActivity() {
             adapter = this@TestChecklistActivity.adapter
         }
 
+        loadData()
+    }
+
+    private fun loadData() {
         lifecycleScope.launch {
             val inst = App.repo.getInstance(instanceId) ?: run { finish(); return@launch }
             supportActionBar?.title = "开始测试 · ${inst.name}"
@@ -82,19 +106,26 @@ class TestChecklistActivity : AppCompatActivity() {
                 App.db.plannedItemDao().allOfInstanceOnce(instanceId)
                     .filter { it.enabled && it.result == PlannedItem.RESULT_PASS }
             )
+            // 缓存历史故障原因
             val allFaultIds = pending.map { it.faultId }
                 .flatMap { id -> id.split(",").filter { it.isNotEmpty() } }
             if (allFaultIds.isNotEmpty()) {
-                App.db.faultRecordDao().byIdsOnce(allFaultIds).forEach { lastReasons[it.id] = it.symptom }
+                App.db.faultRecordDao().byIdsOnce(allFaultIds)
+                    .forEach { lastReasons[it.id] = it.symptom }
             }
             adapter.submit(pending)
             pendingTotal = pending.size
-            findViewById<TextView>(R.id.tv_check_empty).visibility =
-                if (pending.isEmpty() && passedItems.isEmpty()) View.VISIBLE else View.GONE
-            findViewById<RecyclerView>(R.id.rv_checks).visibility =
-                if (pending.isEmpty() && passedItems.isEmpty()) View.GONE else View.VISIBLE
+            updateEmptyState(pending)
             refreshCount()
         }
+    }
+
+    private fun updateEmptyState(pending: List<PlannedItem> = emptyList()) {
+        val hasData = pending.isNotEmpty() || passedItems.isNotEmpty()
+        findViewById<TextView>(R.id.tv_check_empty).visibility =
+            if (hasData) View.GONE else View.VISIBLE
+        findViewById<RecyclerView>(R.id.rv_checks).visibility =
+            if (hasData) View.VISIBLE else View.GONE
     }
 
     private fun refreshInfo() {
@@ -130,15 +161,34 @@ class TestChecklistActivity : AppCompatActivity() {
         }
     }
 
+    private fun hasUnsavedChanges() =
+        passIds.isNotEmpty() || failNotes.isNotEmpty() || resolvedFaultIds.isNotEmpty()
+
     private fun refreshCount() {
-        tvCount.text = getString(
-            R.string.check_count_fmt,
-            passIds.size + failNotes.size, pendingTotal, passIds.size, failNotes.size
-        )
-        btnGenerate.isEnabled = passIds.isNotEmpty() || failNotes.isNotEmpty()
+        val operated = passIds.size + failNotes.size
+        tvCount.text = getString(R.string.check_count_fmt, operated, pendingTotal)
+        btnGenerate.isEnabled = hasUnsavedChanges()
     }
 
     private var pendingTotal = 0
+
+    // ---------- 保存/生成 ----------
+
+    private fun showUnsavedDialog() {
+        val dbg = SyncStore.currentDebugger(this)
+        if (dbg.isBlank()) {
+            Toast.makeText(this, R.string.debugger_pick_first, Toast.LENGTH_LONG).show()
+            showSwitchDebuggerDialog()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.unsaved_changes)
+            .setMessage(R.string.unsaved_changes_msg)
+            .setPositiveButton(R.string.save_and_generate) { _, _ -> doGenerate(dbg) }
+            .setNeutralButton(R.string.discard_changes) { _, _ -> finish() }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
 
     private fun confirmGenerate() {
         val dbg = SyncStore.currentDebugger(this)
@@ -147,10 +197,11 @@ class TestChecklistActivity : AppCompatActivity() {
             showSwitchDebuggerDialog()
             return
         }
+        val count = passIds.size + failNotes.size + resolvedFaultIds.size
         AlertDialog.Builder(this)
             .setTitle(R.string.generate_log)
             .setMessage(
-                getString(R.string.generate_confirm_fmt2, passIds.size + failNotes.size) +
+                getString(R.string.generate_independent_fmt, count) +
                     "\n" + getString(R.string.generate_as_debugger, dbg)
             )
             .setPositiveButton(R.string.confirm) { _, _ -> doGenerate(dbg) }
@@ -161,12 +212,15 @@ class TestChecklistActivity : AppCompatActivity() {
     private fun doGenerate(testerInput: String) {
         lifecycleScope.launch {
             try {
-                App.repo.startTestSave(
-                    instanceId,
-                    passIds.toList(),
-                    failNotes.map { it.key to it.value.split("\n").filter { s -> s.isNotBlank() } },
-                    testerInput,
-                    SyncStore.currentUser(this@TestChecklistActivity).orEmpty()
+                App.repo.generateIndependentLogs(
+                    instanceId = instanceId,
+                    passIds = passIds.toList(),
+                    failItems = failNotes.mapValues { (_, v) ->
+                        v.split("\n").filter { it.isNotBlank() }
+                    },
+                    resolvedFaults = resolvedFaultIds.mapValues { it.value.toList() },
+                    tester = testerInput.trim(),
+                    actor = SyncStore.currentUser(this@TestChecklistActivity).orEmpty()
                 )
                 Toast.makeText(this@TestChecklistActivity, R.string.log_generated, Toast.LENGTH_SHORT).show()
                 finish()
@@ -215,62 +269,93 @@ class TestChecklistActivity : AppCompatActivity() {
         dlg.show()
     }
 
-    /** 故障列表对话框：显示故障条目，每条可单独通过 */
+    /**
+     * 故障列表对话框：显示故障条目，每条可通过/撤回。
+     * 从DB读取FaultRecord，resolvedFaultIds跟踪本次会话中消除的故障。
+     */
     private fun showFaultListDialog(item: PlannedItem) {
-        val faultText = failNotes[item.id].orEmpty()
-        if (faultText.isBlank()) {
-            Toast.makeText(this, R.string.fault_list_empty, Toast.LENGTH_SHORT).show()
-            return
-        }
-        val faults = faultText.split("\n").filter { it.isNotBlank() }.toMutableList()
+        lifecycleScope.launch {
+            val dbFaults = App.repo.faultsForTestItem(instanceId, item.content)
+            if (dbFaults.isEmpty() && failNotes[item.id].isNullOrBlank()) {
+                Toast.makeText(this@TestChecklistActivity, R.string.fault_list_empty, Toast.LENGTH_SHORT).show()
+                return@launch
+            }
 
-        val holder = arrayOfNulls<FaultListAdapter>(1)
-
-        val rv = RecyclerView(this).apply {
-            layoutManager = LinearLayoutManager(this@TestChecklistActivity)
-            setPadding(48, 16, 48, 0)
-        }
-
-        holder[0] = FaultListAdapter(faults) { position ->
-            if (position in faults.indices) {
-                faults.removeAt(position)
-                if (faults.isEmpty()) {
-                    failNotes.remove(item.id)
-                    passIds.add(item.id)
-                } else {
-                    failNotes[item.id] = faults.joinToString("\n")
+            // 合并：DB中的故障 + 本次新增的故障（暂存文本）
+            val allFaults = mutableListOf<Pair<String, Boolean>>() // (symptom, isResolvedInDb)
+            dbFaults.forEach { allFaults.add(it.symptom to (it.status == FaultRecord.STATUS_RESOLVED)) }
+            val newFaultText = failNotes[item.id]
+            if (!newFaultText.isNullOrBlank()) {
+                newFaultText.split("\n").map { it.trim() }.filter { it.isNotEmpty() }.forEach { sym ->
+                    if (allFaults.none { it.first == sym }) allFaults.add(sym to false)
                 }
-                holder[0]?.notifyDataSetChanged()
-                this.adapter.notifyDataSetChanged()
-                refreshCount()
-                Toast.makeText(this, getString(R.string.fault_pass_ok, item.content), Toast.LENGTH_SHORT).show()
             }
-        }
-        rv.adapter = holder[0]
 
-        AlertDialog.Builder(this)
-            .setTitle("故障列表 · ${item.content}")
-            .setView(rv)
-            .setPositiveButton(R.string.fault_add_new) { _, _ ->
-                showMultiFaultDialog(item)
+            // 当前会话中消除的故障（UI层追踪）
+            val sessionResolved = mutableSetOf<String>() // symptom
+
+            val holder = arrayOfNulls<FaultListAdapter>(1)
+            val rv = RecyclerView(this@TestChecklistActivity).apply {
+                layoutManager = LinearLayoutManager(this@TestChecklistActivity)
+                setPadding(48, 16, 48, 0)
             }
-            .setNegativeButton(R.string.cancel, null)
-            .show()
+
+            fun refreshDialog() {
+                holder[0]?.submit(allFaults.map { (sym, dbResolved) ->
+                    sym to (dbResolved || sym in sessionResolved)
+                })
+            }
+
+            holder[0] = FaultListAdapter(
+                allFaults.map { (sym, dbResolved) -> sym to (dbResolved || sym in sessionResolved) },
+                onPass = { position ->
+                    val (sym, _) = allFaults[position]
+                    sessionResolved.add(sym)
+                    refreshDialog()
+                },
+                onUndo = { position ->
+                    val (sym, _) = allFaults[position]
+                    sessionResolved.remove(sym)
+                    refreshDialog()
+                }
+            )
+            rv.adapter = holder[0]
+
+            AlertDialog.Builder(this@TestChecklistActivity)
+                .setTitle("故障列表 · ${item.content}")
+                .setView(rv)
+                .setPositiveButton(R.string.fault_add_new) { _, _ ->
+                    showMultiFaultDialog(item)
+                }
+                .setNegativeButton(R.string.cancel, null)
+                .setOnDismissListener {
+                    // 关闭对话框时，将本次消除的故障记录到resolvedFaultIds
+                    if (sessionResolved.isNotEmpty()) {
+                        // 从DB中找到这些故障的ID
+                        val resolvedIds = dbFaults
+                            .filter { it.symptom in sessionResolved && it.status == FaultRecord.STATUS_PENDING }
+                            .map { it.id }
+                        if (resolvedIds.isNotEmpty()) {
+                            resolvedFaultIds.getOrPut(item.id) { mutableListOf() }.addAll(resolvedIds)
+                        }
+                        // 更新UI：显示已处理状态
+                        adapter.notifyDataSetChanged()
+                        refreshCount()
+                    }
+                }
+                .show()
+        }
     }
 
-    /** 已通过项：测试流程+历史故障时间线对话框（只读） */
-    private fun showTimelineDialog(item: PlannedItem) {
+    /** 已通过项/日志列表：测试流程+历史故障时间线对话框（只读） */
+    fun showTimelineDialog(instanceId: String, title: String) {
         lifecycleScope.launch {
-            val timeline = App.repo.historyTimeline(instanceId, item.content)
+            val timeline = App.repo.historyTimeline(instanceId, title)
 
             if (timeline.isEmpty()) {
-                // 无历史记录时显示基本信息
-                val sb = StringBuilder()
-                sb.appendLine(item.content)
-                if (item.doneAt > 0) sb.appendLine("通过时间：${DT.full(item.doneAt)}")
                 AlertDialog.Builder(this@TestChecklistActivity)
-                    .setTitle(getString(R.string.timeline_title, item.content))
-                    .setMessage(sb.toString())
+                    .setTitle(getString(R.string.timeline_title, title))
+                    .setMessage(getString(R.string.timeline_empty))
                     .setPositiveButton(R.string.close, null)
                     .show()
                 return@launch
@@ -291,21 +376,20 @@ class TestChecklistActivity : AppCompatActivity() {
                 addView(rv)
             }
 
-            // 统计信息
-            val totalFaults = timeline.sumOf { it.second.size }
-            val pendingFaults = timeline.sumOf { it.second.count { f -> f.status == FaultRecord.STATUS_PENDING } }
+            val passCount = timeline.count { it.first.logType == DebugLog.LOG_TYPE_PASS }
+            val faultCount = timeline.count { it.first.logType == DebugLog.LOG_TYPE_FAULT }
+            val resCount = timeline.count { it.first.logType == DebugLog.LOG_TYPE_RESOLUTION }
             tv.text = buildString {
-                appendLine("共 ${timeline.size} 次测试")
-                if (totalFaults > 0) {
-                    append("故障 $totalFaults 条")
-                    if (pendingFaults > 0) append("（待处理 $pendingFaults）")
-                    appendLine()
-                }
+                appendLine("共 ${timeline.size} 条记录")
+                if (passCount > 0) append("通过 $passCount  ")
+                if (faultCount > 0) append("故障 $faultCount  ")
+                if (resCount > 0) append("消除 $resCount")
+                if (isNotEmpty()) appendLine()
                 append("当前状态：✓ 已通过")
             }
 
             AlertDialog.Builder(this@TestChecklistActivity)
-                .setTitle(getString(R.string.timeline_title, item.content))
+                .setTitle(getString(R.string.timeline_title, title))
                 .setView(container)
                 .setPositiveButton(R.string.close, null)
                 .show()
@@ -352,17 +436,8 @@ class TestChecklistActivity : AppCompatActivity() {
                     App.repo.rejectPassedItem(item)
                     failNotes[item.id] = faults.joinToString("\n")
                     passIds.remove(item.id)
-                    // 重新加载数据：通过项删除后应出现在未测列表
-                    val pending = App.db.plannedItemDao().pendingForTestOnce(instanceId)
-                    passedItems.clear()
-                    passedItems.addAll(
-                        App.db.plannedItemDao().allOfInstanceOnce(instanceId)
-                            .filter { it.enabled && it.result == PlannedItem.RESULT_PASS }
-                    )
-                    adapter.submit(pending)
-                    pendingTotal = pending.size
-                    adapter.notifyDataSetChanged()
-                    refreshCount()
+                    // 重新加载数据
+                    loadData()
                 }
             }
             .setNegativeButton(R.string.cancel, null)
@@ -396,7 +471,7 @@ class TestChecklistActivity : AppCompatActivity() {
                 h.btnPass.visibility = View.GONE
                 h.btnFail.visibility = View.GONE
                 // 点击文字 → 时间线
-                h.tvText.setOnClickListener { showTimelineDialog(p) }
+                h.tvText.setOnClickListener { showTimelineDialog(instanceId, p.content) }
                 // 长按文字 → 驳回菜单
                 h.tvText.setOnLongClickListener { showPassedContextMenu(p); true }
                 h.tvText.isLongClickable = true
@@ -436,7 +511,7 @@ class TestChecklistActivity : AppCompatActivity() {
             h.tvReason.visibility = if (faultSummary.isBlank()) View.GONE else View.VISIBLE
             h.tvReason.text = faultSummary
 
-            // 通过按钮：未测→直接通过；有故障→直接通过并清除故障
+            // 通过按钮
             h.btnPass.apply {
                 visibility = View.VISIBLE
                 alpha = if (markedPass) 1f else 0.55f
@@ -452,13 +527,13 @@ class TestChecklistActivity : AppCompatActivity() {
                 }
             }
 
-            // 问题按钮：有故障→故障列表；未测→多故障输入
+            // 问题按钮
             h.btnFail.apply {
                 visibility = View.VISIBLE
                 alpha = if (markedFail) 1f else 0.55f
                 text = if (markedFail) "✗ 已记" else getString(R.string.btn_fail)
                 setOnClickListener {
-                    if (markedFail) {
+                    if (markedFail || item.result == PlannedItem.RESULT_FAIL && item.faultId.isNotBlank()) {
                         showFaultListDialog(item)
                     } else {
                         showMultiFaultDialog(item)
@@ -466,10 +541,7 @@ class TestChecklistActivity : AppCompatActivity() {
                 }
             }
 
-            // 点击文字：
-            // 有故障项 → 故障列表对话框
-            // 上次未通过项 → 也可弹故障列表（查看历史故障）
-            // 未测项 → 无操作
+            // 点击文字：有故障项→故障列表；上次未通过项→故障列表
             h.tvText.setOnClickListener {
                 when {
                     markedFail -> showFaultListDialog(item)
@@ -487,15 +559,24 @@ private class CheckVH(v: View) : RecyclerView.ViewHolder(v) {
     val btnFail: Button = v.findViewById(R.id.btn_fail)
 }
 
-/** 故障列表适配器：每条故障可点击通过 */
+/**
+ * 故障列表适配器：每条故障可点击通过/撤回。
+ * 已解决的项显示删除线 + 绿色"已处理" + 撤回按钮。
+ */
 private class FaultListAdapter(
-    private val faults: MutableList<String>,
-    private val onPass: (Int) -> Unit
+    private var data: List<Pair<String, Boolean>>, // (symptom, isResolved)
+    private val onPass: (Int) -> Unit,
+    private val onUndo: (Int) -> Unit
 ) : RecyclerView.Adapter<FaultListAdapter.VH>() {
+
+    fun submit(newData: List<Pair<String, Boolean>>) {
+        data = newData
+        notifyDataSetChanged()
+    }
 
     class VH(v: View) : RecyclerView.ViewHolder(v) {
         val tvFault: TextView = v.findViewById(R.id.tv_fault_text)
-        val btnPass: Button = v.findViewById(R.id.btn_fault_pass)
+        val btnAction: Button = v.findViewById(R.id.btn_fault_pass)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
@@ -503,17 +584,27 @@ private class FaultListAdapter(
         return VH(v)
     }
 
-    override fun getItemCount() = faults.size
+    override fun getItemCount() = data.size
 
     override fun onBindViewHolder(h: VH, pos: Int) {
-        h.tvFault.text = faults[pos]
-        h.btnPass.setOnClickListener { onPass(pos) }
+        val (symptom, isResolved) = data[pos]
+        val ctx = h.itemView.context
+        h.tvFault.text = if (isResolved) "$symptom  ${ctx.getString(R.string.fault_resolved_label)}" else symptom
+        h.tvFault.setTextColor(if (isResolved) Color.parseColor("#2E7D32") else Color.parseColor("#212121"))
+        if (isResolved) {
+            h.tvFault.paintFlags = h.tvFault.paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
+        } else {
+            h.tvFault.paintFlags = h.tvFault.paintFlags and Paint.STRIKE_THRU_TEXT_FLAG.inv()
+        }
+        h.btnAction.text = if (isResolved) ctx.getString(R.string.undo) else ctx.getString(R.string.fault_pass)
+        h.btnAction.setTextColor(if (isResolved) Color.parseColor("#757575") else Color.parseColor("#2E7D32"))
+        h.btnAction.setOnClickListener { if (isResolved) onUndo(pos) else onPass(pos) }
     }
 }
 
 /** 时间线适配器：显示测试流程+故障记录 */
 private class TimelineAdapter(
-    private val data: List<Pair<DebugLog, List<FaultRecord>>>
+    private val data: List<Triple<DebugLog, String, List<FaultRecord>>>
 ) : RecyclerView.Adapter<TimelineAdapter.VH>() {
 
     class VH(v: View) : RecyclerView.ViewHolder(v) {
@@ -530,24 +621,28 @@ private class TimelineAdapter(
     override fun getItemCount() = data.size
 
     override fun onBindViewHolder(h: VH, pos: Int) {
-        val (log, faults) = data[pos]
+        val (log, remark, faults) = data[pos]
         val ctx = h.itemView.context
         h.tvLog.text = ctx.getString(R.string.timeline_log_fmt, DT.full(log.createdAt), log.tester)
 
-        if (faults.isNotEmpty()) {
-            h.tvFaults.visibility = View.VISIBLE
-            val faultText = faults.joinToString("\n") { f ->
-                val status = if (f.status == FaultRecord.STATUS_PENDING)
-                    ctx.getString(R.string.timeline_fault_pending)
-                else ctx.getString(R.string.timeline_fault_resolved)
-                ctx.getString(R.string.timeline_fault_fmt, f.symptom) + "[$status]"
+        when (log.logType) {
+            DebugLog.LOG_TYPE_FAULT -> {
+                h.tvFaults.visibility = View.VISIBLE
+                h.tvFaults.text = ctx.getString(R.string.timeline_fault_fmt, remark)
+                h.tvFaults.setTextColor(Color.parseColor("#D32F2F"))
+                h.tvPass.visibility = View.GONE
             }
-            h.tvFaults.text = faultText
-            h.tvPass.visibility = View.GONE
-        } else {
-            h.tvFaults.visibility = View.GONE
-            h.tvPass.visibility = View.VISIBLE
-            h.tvPass.text = ctx.getString(R.string.timeline_pass)
+            DebugLog.LOG_TYPE_RESOLUTION -> {
+                h.tvFaults.visibility = View.VISIBLE
+                h.tvFaults.text = "${ctx.getString(R.string.timeline_fault_fmt, remark)}  ${ctx.getString(R.string.fault_resolved_label)}"
+                h.tvFaults.setTextColor(Color.parseColor("#2E7D32"))
+                h.tvPass.visibility = View.GONE
+            }
+            else -> {
+                h.tvFaults.visibility = View.GONE
+                h.tvPass.visibility = View.VISIBLE
+                h.tvPass.text = ctx.getString(R.string.timeline_pass)
+            }
         }
     }
 }

@@ -105,13 +105,22 @@ data class DebugLog(
     val instanceId: String,
     val circuit: String = "",
     val testContent: String,
+    /** 0=通过日志 1=故障日志 2=消除日志 */
+    @ColumnInfo(defaultValue = "0") val logType: Int = LOG_TYPE_PASS,
     val tester: String = "",
+    /** 故障原因/消除原因（故障日志和消除日志时有意义） */
     val remark: String = "",
     val createdBy: String = "",
     val updatedBy: String = "",
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
-)
+) {
+    companion object {
+        const val LOG_TYPE_PASS = 0
+        const val LOG_TYPE_FAULT = 1
+        const val LOG_TYPE_RESOLUTION = 2
+    }
+}
 
 /** 故障记录：status 0=待处理 1=已解决；resolvedAt=0 表示未解决 */
 @Entity(
@@ -257,9 +266,7 @@ data class LogListItem(
     val typeId: String,
     val instanceName: String,
     val deviceCode: String,
-    val installer: String,
-    val pendingCount: Int,
-    val resolvedCount: Int
+    val installer: String
 )
 
 data class ProjectListItem(

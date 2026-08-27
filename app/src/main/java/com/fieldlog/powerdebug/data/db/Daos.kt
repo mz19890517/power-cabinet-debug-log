@@ -224,9 +224,7 @@ interface InstanceDao {
 interface DebugLogDao {
     @Query(
         """SELECT l.*, p.name AS projectName, t.name AS typeName, i.typeId AS typeId, i.name AS instanceName,
-        i.deviceCode AS deviceCode, i.installer AS installer,
-        (SELECT COUNT(*) FROM fault_records f WHERE f.logId = l.id AND f.status = 0) AS pendingCount,
-        (SELECT COUNT(*) FROM fault_records f WHERE f.logId = l.id AND f.status = 1) AS resolvedCount
+        i.deviceCode AS deviceCode, i.installer AS installer
         FROM debug_logs l
         INNER JOIN instances i ON l.instanceId = i.id
         INNER JOIN cabinet_types t ON i.typeId = t.id
@@ -235,17 +233,14 @@ interface DebugLogDao {
           AND (:typeId = '' OR i.typeId = :typeId)
           AND (:instanceId = '' OR l.instanceId = :instanceId)
           AND (:status = -1
-               OR (:status = 0 AND EXISTS(SELECT 1 FROM fault_records fp WHERE fp.logId = l.id AND fp.status = 0))
-               OR (:status = 1 AND EXISTS(SELECT 1 FROM fault_records fr WHERE fr.logId = l.id AND fr.status = 1)
-                    AND NOT EXISTS(SELECT 1 FROM fault_records fn WHERE fn.logId = l.id AND fn.status = 0)))
+               OR (:status = 0 AND l.logType = 1)
+               OR (:status = 1 AND l.logType = 2))
           AND (:circuit = '' OR l.circuit LIKE '%' || :circuit || '%')
           AND (:q = '' OR l.testContent LIKE '%' || :q || '%'
                OR IFNULL(l.remark, '') LIKE '%' || :q || '%'
                OR IFNULL(l.tester, '') LIKE '%' || :q || '%'
                OR i.name LIKE '%' || :q || '%'
-               OR p.name LIKE '%' || :q || '%'
-               OR EXISTS(SELECT 1 FROM fault_records fs WHERE fs.logId = l.id
-                    AND (fs.symptom LIKE '%' || :q || '%' OR fs.solution LIKE '%' || :q || '%' OR fs.circuit LIKE '%' || :q || '%')))
+               OR p.name LIKE '%' || :q || '%')
         ORDER BY l.createdAt DESC"""
     )
     suspend fun search(
@@ -255,9 +250,7 @@ interface DebugLogDao {
 
     @Query(
         """SELECT l.*, p.name AS projectName, t.name AS typeName, i.typeId AS typeId, i.name AS instanceName,
-        i.deviceCode AS deviceCode, i.installer AS installer,
-        (SELECT COUNT(*) FROM fault_records f WHERE f.logId = l.id AND f.status = 0) AS pendingCount,
-        (SELECT COUNT(*) FROM fault_records f WHERE f.logId = l.id AND f.status = 1) AS resolvedCount
+        i.deviceCode AS deviceCode, i.installer AS installer
         FROM debug_logs l
         INNER JOIN instances i ON l.instanceId = i.id
         INNER JOIN cabinet_types t ON i.typeId = t.id
@@ -268,9 +261,7 @@ interface DebugLogDao {
 
     @Query(
         """SELECT l.*, p.name AS projectName, t.name AS typeName, i.typeId AS typeId, i.name AS instanceName,
-        i.deviceCode AS deviceCode, i.installer AS installer,
-        (SELECT COUNT(*) FROM fault_records f WHERE f.logId = l.id AND f.status = 0) AS pendingCount,
-        (SELECT COUNT(*) FROM fault_records f WHERE f.logId = l.id AND f.status = 1) AS resolvedCount
+        i.deviceCode AS deviceCode, i.installer AS installer
         FROM debug_logs l
         INNER JOIN instances i ON l.instanceId = i.id
         INNER JOIN cabinet_types t ON i.typeId = t.id
@@ -300,9 +291,7 @@ interface DebugLogDao {
 
     @Query(
         """SELECT l.*, p.name AS projectName, t.name AS typeName, i.typeId AS typeId, i.name AS instanceName,
-        i.deviceCode AS deviceCode, i.installer AS installer,
-        (SELECT COUNT(*) FROM fault_records f WHERE f.logId = l.id AND f.status = 0) AS pendingCount,
-        (SELECT COUNT(*) FROM fault_records f WHERE f.logId = l.id AND f.status = 1) AS resolvedCount
+        i.deviceCode AS deviceCode, i.installer AS installer
         FROM debug_logs l
         INNER JOIN instances i ON l.instanceId = i.id
         INNER JOIN cabinet_types t ON i.typeId = t.id
@@ -335,6 +324,23 @@ interface DebugLogDao {
 
     @Query("SELECT COUNT(*) FROM debug_logs")
     suspend fun count(): Int
+
+    /** 查某故障的消除日志（logType=2，remark匹配symptom） */
+    @Query(
+        """SELECT l.* FROM debug_logs l
+        WHERE l.instanceId = :instanceId AND l.testContent = :content AND l.logType = 2
+          AND l.remark = :symptom
+        ORDER BY l.createdAt DESC LIMIT 1"""
+    )
+    suspend fun resolutionLogOf(instanceId: String, content: String, symptom: String): DebugLog?
+
+    /** 查某柜某测试项的所有日志（按时间排序，用于时间线） */
+    @Query(
+        """SELECT l.* FROM debug_logs l
+        WHERE l.instanceId = :instanceId AND l.testContent = :content
+        ORDER BY l.createdAt"""
+    )
+    suspend fun byInstanceAndContentOnce(instanceId: String, content: String): List<DebugLog>
 }
 
 @Dao
@@ -383,19 +389,18 @@ interface FaultRecordDao {
     )
     suspend fun resolveByIds(ids: List<String>, t: Long)
 
-    /** 单条标记通过 */
-    @Query("UPDATE fault_records SET status = 1, resolvedAt = :t, updatedAt = :t WHERE id = :id AND status = 0")
-    suspend fun passSingle(id: String, t: Long = System.currentTimeMillis())
-
     /** 单条驳回（恢复为待处理） */
     @Query("UPDATE fault_records SET status = 0, resolvedAt = 0, updatedAt = :t WHERE id = :id AND status = 1")
     suspend fun unpassSingle(id: String, t: Long = System.currentTimeMillis())
 
-    @Query("DELETE FROM fault_records")
-    suspend fun wipe()
-
-    @Query("SELECT COUNT(*) FROM fault_records WHERE status = 0")
-    suspend fun countPending(): Int
+    /** 查某柜某测试项名称关联的故障记录（通过log.testContent匹配） */
+    @Query(
+        """SELECT f.* FROM fault_records f
+        INNER JOIN debug_logs l ON f.logId = l.id
+        WHERE l.instanceId = :instanceId AND l.testContent = :content AND l.logType = 1
+        ORDER BY f.occurredAt"""
+    )
+    suspend fun byInstanceAndContentOnce(instanceId: String, content: String): List<FaultRecord>
 }
 
 @Dao
@@ -457,6 +462,10 @@ interface PlannedItemDao {
     /** 删除日志时选择"重测"：恢复为未测 */
     @Query("UPDATE planned_items SET result = 0, doneAt = 0, logId = '', faultId = '', updatedAt = :at WHERE logId = :logId")
     suspend fun resetForLog(logId: String, at: Long)
+
+    /** 按柜子实例+测试项名称恢复为未测（用于故障/消除日志删除） */
+    @Query("UPDATE planned_items SET result = 0, doneAt = 0, logId = '', faultId = '', updatedAt = :at WHERE instanceId = :instanceId AND content = :content")
+    suspend fun resetByInstanceAndContent(instanceId: String, content: String, at: Long)
 
     /** 删除日志时选择"连项删除"：这些预选项可能是误添加的 */
     @Query("DELETE FROM planned_items WHERE logId = :logId")

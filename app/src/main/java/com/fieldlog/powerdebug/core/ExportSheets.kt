@@ -2,6 +2,7 @@ package com.fieldlog.powerdebug.core
 
 import android.content.Context
 import com.fieldlog.powerdebug.R
+import com.fieldlog.powerdebug.data.db.DebugLog
 import com.fieldlog.powerdebug.data.db.FaultExportRow
 import com.fieldlog.powerdebug.data.db.FaultRecord
 import com.fieldlog.powerdebug.data.db.LogListItem
@@ -18,8 +19,8 @@ object ExportSheets {
     /** 日志表全部列定义（供弹窗展示列名，索引对应） */
     val LOG_COL_NAMES = listOf(
         "序号", "项目", "柜子类型", "实例名称", "设备编号", "回路",
-        "测试内容", "测试人员", "备注", "安装人员", "创建账号", "修改账号",
-        "待处理故障数", "已解决故障数", "记录时间", "更新时间"
+        "测试内容", "日志类型", "测试人员", "备注", "安装人员", "创建账号", "修改账号",
+        "记录时间", "更新时间"
     )
 
     /** 故障表全部列定义 */
@@ -48,13 +49,16 @@ object ExportSheets {
             it.deviceCode,
             it.log.circuit.ifEmpty { ctx.getString(R.string.whole_cabinet) },
             it.log.testContent,
+            when (it.log.logType) {
+                DebugLog.LOG_TYPE_FAULT -> "故障"
+                DebugLog.LOG_TYPE_RESOLUTION -> "消除"
+                else -> "通过"
+            },
             it.log.tester,
             it.log.remark,
             if (it.installer.isBlank()) "" else "${it.installer}",
             it.log.createdBy,
             it.log.updatedBy,
-            it.pendingCount.toString(),
-            it.resolvedCount.toString(),
             DT.full(it.log.createdAt),
             DT.full(it.log.updatedAt)
         )

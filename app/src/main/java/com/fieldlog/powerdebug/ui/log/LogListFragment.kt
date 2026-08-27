@@ -11,7 +11,10 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
+import android.widget.EditText
 import android.widget.Spinner
+import android.widget.TextView
+import android.widget.Toast
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -21,6 +24,7 @@ import com.fieldlog.powerdebug.R
 import com.fieldlog.powerdebug.data.LogDeleteMode
 import com.fieldlog.powerdebug.data.db.CabinetInstance
 import com.fieldlog.powerdebug.data.db.CabinetType
+import com.fieldlog.powerdebug.data.db.DebugLog
 import com.fieldlog.powerdebug.data.db.LogListItem
 import com.fieldlog.powerdebug.data.db.Project
 import com.fieldlog.powerdebug.databinding.FragmentLogListBinding
@@ -56,7 +60,7 @@ class LogListFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         adapter = LogAdapter(
-            onClick = { },
+            onClick = { showTimelineFromLog(it) },
             onLongClick = { confirmDelete(it) }
         )
         b.rvLogs.layoutManager = LinearLayoutManager(requireContext())
@@ -105,6 +109,205 @@ class LogListFragment : Fragment() {
         _b = null
     }
 
+    // ---------- 时间线（点击日志条目） ----------
+
+    private fun showTimelineFromLog(item: LogListItem) {
+        val tv = EditText(requireContext()).apply {
+            isEnabled = false
+            minLines = 1
+        }
+
+        lifecycleScope.launch {
+            val timeline = App.repo.historyTimeline(item.log.instanceId, item.log.testContent)
+
+            if (timeline.isEmpty()) {
+                AlertDialog.Builder(requireContext())
+                    .setTitle(getString(R.string.timeline_title, item.log.testContent))
+                    .setMessage(getString(R.string.timeline_empty))
+                    .setPositiveButton(R.string.close, null)
+                    .show()
+                return@launch
+            }
+
+            val header = TextView(requireContext()).apply {
+                setPadding(48, 32, 48, 16)
+                textSize = 15f
+            }
+            val rv = RecyclerView(requireContext()).apply {
+                layoutManager = LinearLayoutManager(requireContext())
+                adapter = TimelineLogAdapter(timeline)
+            }
+
+            val container = android.widget.LinearLayout(requireContext()).apply {
+                orientation = android.widget.LinearLayout.VERTICAL
+                addView(header)
+                addView(rv)
+            }
+
+            val passCount = timeline.count { it.first.logType == DebugLog.LOG_TYPE_PASS }
+            val faultCount = timeline.count { it.first.logType == DebugLog.LOG_TYPE_FAULT }
+            val resCount = timeline.count { it.first.logType == DebugLog.LOG_TYPE_RESOLUTION }
+            header.text = buildString {
+                appendLine("共 ${timeline.size} 条记录")
+                if (passCount > 0) append("通过 $passCount  ")
+                if (faultCount > 0) append("故障 $faultCount  ")
+                if (resCount > 0) append("消除 $resCount")
+            }
+
+            AlertDialog.Builder(requireContext())
+                .setTitle(getString(R.string.timeline_title, item.log.testContent))
+                .setView(container)
+                .setPositiveButton(R.string.close, null)
+                .show()
+        }
+    }
+
+    // ---------- 删除逻辑（按logType分支） ----------
+
+    private fun confirmDelete(item: LogListItem) {
+        when (item.log.logType) {
+            DebugLog.LOG_TYPE_PASS -> confirmDeletePassLog(item)
+            DebugLog.LOG_TYPE_FAULT -> confirmDeleteFaultLog(item)
+            DebugLog.LOG_TYPE_RESOLUTION -> confirmDeleteResolutionLog(item)
+        }
+    }
+
+    /** 通过日志：现有三选项（重测/连项删除） */
+    private fun confirmDeletePassLog(item: LogListItem) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            val linked = App.repo.linkedPlannedOfLog(item.log.id)
+            if (linked.isEmpty()) {
+                com.fieldlog.powerdebug.util.DeleteSafeguard.confirmDelete(
+                    context = requireContext(),
+                    title = R.string.delete,
+                    message = "删除「${item.instanceName} · ${item.log.circuit.ifEmpty { getString(R.string.whole_cabinet) }}」这条通过日志？",
+                    typeName = "日志"
+                ) {
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        App.repo.deleteLog(item.log.id, LogDeleteMode.RESTORE_PLANNED)
+                        reload()
+                    }
+                }
+            } else {
+                AlertDialog.Builder(requireContext())
+                    .setTitle(R.string.delete)
+                    .setIcon(android.R.drawable.ic_dialog_alert)
+                    .setMessage(
+                        "删除「${item.instanceName} · ${item.log.circuit.ifEmpty { getString(R.string.whole_cabinet) }}」这条通过日志？\n" +
+                            "它完成了 ${linked.size} 项预选待测项目。"
+                    )
+                    .setPositiveButton(R.string.del_log_retest) { _, _ ->
+                        com.fieldlog.powerdebug.util.DeleteSafeguard.confirmDelete(
+                            context = requireContext(),
+                            title = R.string.delete,
+                            message = "确认删除并恢复预选待测项？",
+                            typeName = "日志"
+                        ) {
+                            viewLifecycleOwner.lifecycleScope.launch {
+                                App.repo.deleteLog(item.log.id, LogDeleteMode.RESTORE_PLANNED)
+                                reload()
+                            }
+                        }
+                    }
+                    .setNeutralButton(R.string.del_log_purge) { _, _ ->
+                        com.fieldlog.powerdebug.util.DeleteSafeguard.confirmDelete(
+                            context = requireContext(),
+                            title = R.string.delete,
+                            message = "确认删除并连项删除预选待测项？",
+                            typeName = "日志"
+                        ) {
+                            viewLifecycleOwner.lifecycleScope.launch {
+                                App.repo.deleteLog(item.log.id, LogDeleteMode.PURGE_PLANNED)
+                                reload()
+                            }
+                        }
+                    }
+                    .setNegativeButton(R.string.cancel, null)
+                    .show()
+            }
+        }
+    }
+
+    /** 故障日志：两选项 */
+    private fun confirmDeleteFaultLog(item: LogListItem) {
+        AlertDialog.Builder(requireContext())
+            .setTitle(R.string.delete)
+            .setIcon(android.R.drawable.ic_dialog_alert)
+            .setMessage("删除「${item.log.testContent}」的故障日志？")
+            .setPositiveButton(R.string.del_fault_and_resolution) { _, _ ->
+                com.fieldlog.powerdebug.util.DeleteSafeguard.confirmDelete(
+                    context = requireContext(),
+                    title = R.string.delete,
+                    message = "确认删除此故障生成日志和关联消除日志？",
+                    typeName = "日志"
+                ) {
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        App.repo.deleteLog(item.log.id, LogDeleteMode.DELETE_FAULT)
+                        reload()
+                    }
+                }
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    /** 消除日志：两选项 */
+    private fun confirmDeleteResolutionLog(item: LogListItem) {
+        AlertDialog.Builder(requireContext())
+            .setTitle(R.string.delete)
+            .setIcon(android.R.drawable.ic_dialog_alert)
+            .setMessage("删除「${item.log.testContent}」的消除日志？")
+            .setPositiveButton(R.string.del_resolution_reject) { _, _ ->
+                com.fieldlog.powerdebug.util.DeleteSafeguard.confirmDelete(
+                    context = requireContext(),
+                    title = R.string.delete,
+                    message = "确认删除消除日志并驳回？故障将恢复为待处理。",
+                    typeName = "日志"
+                ) {
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        App.repo.deleteLog(item.log.id, LogDeleteMode.DELETE_RESOLUTION)
+                        reload()
+                    }
+                }
+            }
+            .setNeutralButton(R.string.del_fault_and_resolution) { _, _ ->
+                com.fieldlog.powerdebug.util.DeleteSafeguard.confirmDelete(
+                    context = requireContext(),
+                    title = R.string.delete,
+                    message = "确认删除此故障的生成日志和消除日志？",
+                    typeName = "日志"
+                ) {
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        App.repo.deleteLog(item.log.id, LogDeleteMode.DELETE_RESOLUTION_PURGE)
+                        reload()
+                    }
+                }
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    // ---------- 查询 ----------
+
+    private fun reload() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            val list = try {
+                App.repo.searchLogs(
+                    projectId = selProjectId,
+                    typeId = selTypeId,
+                    instanceId = selInstanceId,
+                    status = selStatus,
+                    circuit = b.etCircuitFilter.text?.toString()?.trim().orEmpty(),
+                    q = b.etTextSearch.text?.toString()?.trim().orEmpty()
+                )
+            } catch (e: Exception) {
+                emptyList<LogListItem>()
+            }
+            adapter.submit(list)
+            b.tvEmpty.visibility = if (list.isEmpty()) View.VISIBLE else View.GONE
+        }
+    }
+
     // ---------- 筛选联动 ----------
 
     private fun refreshProjectSpinner() {
@@ -150,87 +353,10 @@ class LogListFragment : Fragment() {
         reload()
     }
 
-    // ---------- 查询 ----------
-
-    private fun reload() {
-        viewLifecycleOwner.lifecycleScope.launch {
-            val list = try {
-                App.repo.searchLogs(
-                    projectId = selProjectId,
-                    typeId = selTypeId,
-                    instanceId = selInstanceId,
-                    status = selStatus,
-                    circuit = b.etCircuitFilter.text?.toString()?.trim().orEmpty(),
-                    q = b.etTextSearch.text?.toString()?.trim().orEmpty()
-                )
-            } catch (e: Exception) {
-                emptyList<LogListItem>()
-            }
-            adapter.submit(list)
-            b.tvEmpty.visibility = if (list.isEmpty()) View.VISIBLE else View.GONE
-        }
-    }
-
-    private fun confirmDelete(item: LogListItem) {
-        viewLifecycleOwner.lifecycleScope.launch {
-            val linked = App.repo.linkedPlannedOfLog(item.log.id)
-            if (linked.isEmpty()) {
-                com.fieldlog.powerdebug.util.DeleteSafeguard.confirmDelete(
-                    context = requireContext(),
-                    title = R.string.delete,
-                    message = "删除「${item.instanceName} · ${item.log.circuit.ifEmpty { getString(R.string.whole_cabinet) }}」这条日志？\n其下故障记录将一并删除。",
-                    typeName = "日志"
-                ) {
-                    viewLifecycleOwner.lifecycleScope.launch {
-                        App.repo.deleteLog(item.log.id, LogDeleteMode.RESTORE_PLANNED)
-                        reload()
-                    }
-                }
-            } else {
-                // 该日志完成了预选待测项：让用户选择重测还是连项删除
-                AlertDialog.Builder(requireContext())
-                    .setTitle(R.string.delete)
-                    .setIcon(android.R.drawable.ic_dialog_alert)
-                    .setMessage(
-                        "删除「${item.instanceName} · ${item.log.circuit.ifEmpty { getString(R.string.whole_cabinet) }}」这条日志？\n" +
-                            "它完成了 ${linked.size} 项预选待测项目。\n其下故障记录将一并删除。"
-                    )
-                    .setPositiveButton(R.string.del_log_retest) { _, _ ->
-                        com.fieldlog.powerdebug.util.DeleteSafeguard.confirmDelete(
-                            context = requireContext(),
-                            title = R.string.delete,
-                            message = "确认删除并恢复预选待测项？",
-                            typeName = "日志"
-                        ) {
-                            viewLifecycleOwner.lifecycleScope.launch {
-                                App.repo.deleteLog(item.log.id, LogDeleteMode.RESTORE_PLANNED)
-                                reload()
-                            }
-                        }
-                    }
-                    .setNeutralButton(R.string.del_log_purge) { _, _ ->
-                        com.fieldlog.powerdebug.util.DeleteSafeguard.confirmDelete(
-                            context = requireContext(),
-                            title = R.string.delete,
-                            message = "确认删除并连项删除预选待测项？",
-                            typeName = "日志"
-                        ) {
-                            viewLifecycleOwner.lifecycleScope.launch {
-                                App.repo.deleteLog(item.log.id, LogDeleteMode.PURGE_PLANNED)
-                                reload()
-                            }
-                        }
-                    }
-                    .setNegativeButton(R.string.cancel, null)
-                    .show()
-            }
-        }
-    }
-
     // ---------- Spinner 工具 ----------
 
     private fun Spinner.bind(items: List<String>, onSel: (Int) -> Unit) {
-        tag = true // 绑定与静默恢复期间忽略回调
+        tag = true
         adapter = ArrayAdapter(requireContext(), R.layout.spinner_item_small, items).apply {
             setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         }
@@ -244,7 +370,6 @@ class LogListFragment : Fragment() {
         }
     }
 
-    /** 静默设置选中位置（避免触发联动） */
     private fun selectSpinner(sp: Spinner, pos: Int) {
         sp.tag = true
         if (pos >= 0 && sp.selectedItemPosition != pos) sp.setSelection(pos, false)
@@ -292,18 +417,8 @@ class LogAdapter(
         val item = data[pos]
         val ctx = h.ib.root.context
         val circuitTxt = item.log.circuit.ifEmpty { ctx.getString(R.string.whole_cabinet) }
-        h.ib.tvTitle.text = "${item.instanceName} · $circuitTxt"
-        h.ib.tvDate.text = DT.full(item.log.createdAt) +
-            if (item.log.updatedAt > item.log.createdAt) ctx.getString(R.string.edited_marker) else ""
-
-        if (item.pendingCount > 0) {
-            h.ib.badgePending.visibility = View.VISIBLE
-            h.ib.badgePending.text = "待处理 ×${item.pendingCount}"
-        } else h.ib.badgePending.visibility = View.GONE
-        if (item.resolvedCount > 0) {
-            h.ib.badgeResolved.visibility = View.VISIBLE
-            h.ib.badgeResolved.text = "已解决 ×${item.resolvedCount}"
-        } else h.ib.badgeResolved.visibility = View.GONE
+        h.ib.tvTitle.text = "${item.projectName} · ${item.instanceName} · $circuitTxt"
+        h.ib.tvDate.text = DT.full(item.log.createdAt)
 
         h.ib.tvContent.text = item.log.testContent
         val tester = item.log.tester.takeIf { it.isNotBlank() }?.let { " · 测试:$it" }.orEmpty()
@@ -311,7 +426,72 @@ class LogAdapter(
             ?.let { " · 记录:$it" }.orEmpty()
         h.ib.tvFooter.text = "${item.projectName} · ${item.typeName}$tester$author"
 
+        // 第五行：根据logType显示
+        when (item.log.logType) {
+            DebugLog.LOG_TYPE_PASS -> {
+                h.ib.tvStatus.visibility = View.VISIBLE
+                h.ib.tvStatus.text = ctx.getString(R.string.log_type_pass)
+                h.ib.tvStatus.setTextColor(ctx.getColor(R.color.primary))
+            }
+            DebugLog.LOG_TYPE_FAULT -> {
+                h.ib.tvStatus.visibility = View.VISIBLE
+                h.ib.tvStatus.text = item.log.remark
+                h.ib.tvStatus.setTextColor(ctx.getColor(R.color.danger))
+            }
+            DebugLog.LOG_TYPE_RESOLUTION -> {
+                h.ib.tvStatus.visibility = View.VISIBLE
+                h.ib.tvStatus.text = "${item.log.remark}  ${ctx.getString(R.string.fault_resolved_label)}"
+                h.ib.tvStatus.setTextColor(ctx.getColor(R.color.primary))
+            }
+            else -> h.ib.tvStatus.visibility = View.GONE
+        }
+
         h.ib.root.setOnClickListener { onClick(item) }
         h.ib.root.setOnLongClickListener { onLongClick(item); true }
+    }
+}
+
+/** 时间线适配器（日志列表用） */
+private class TimelineLogAdapter(
+    private val data: List<Triple<DebugLog, String, List<com.fieldlog.powerdebug.data.db.FaultRecord>>>
+) : RecyclerView.Adapter<TimelineLogAdapter.VH>() {
+
+    class VH(v: View) : RecyclerView.ViewHolder(v) {
+        val tvLog: TextView = v.findViewById(R.id.tv_timeline_log)
+        val tvFaults: TextView = v.findViewById(R.id.tv_timeline_faults)
+        val tvPass: TextView = v.findViewById(R.id.tv_timeline_pass)
+    }
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
+        val v = LayoutInflater.from(parent.context).inflate(R.layout.item_timeline, parent, false)
+        return VH(v)
+    }
+
+    override fun getItemCount() = data.size
+
+    override fun onBindViewHolder(h: VH, pos: Int) {
+        val (log, remark, _) = data[pos]
+        val ctx = h.itemView.context
+        h.tvLog.text = ctx.getString(R.string.timeline_log_fmt, DT.full(log.createdAt), log.tester)
+
+        when (log.logType) {
+            DebugLog.LOG_TYPE_FAULT -> {
+                h.tvFaults.visibility = View.VISIBLE
+                h.tvFaults.text = ctx.getString(R.string.timeline_fault_fmt, remark)
+                h.tvFaults.setTextColor(ctx.getColor(R.color.danger))
+                h.tvPass.visibility = View.GONE
+            }
+            DebugLog.LOG_TYPE_RESOLUTION -> {
+                h.tvFaults.visibility = View.VISIBLE
+                h.tvFaults.text = "${ctx.getString(R.string.timeline_fault_fmt, remark)}  ${ctx.getString(R.string.fault_resolved_label)}"
+                h.tvFaults.setTextColor(ctx.getColor(R.color.primary))
+                h.tvPass.visibility = View.GONE
+            }
+            else -> {
+                h.tvFaults.visibility = View.GONE
+                h.tvPass.visibility = View.VISIBLE
+                h.tvPass.text = ctx.getString(R.string.timeline_pass)
+            }
+        }
     }
 }

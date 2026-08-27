@@ -336,4 +336,17 @@
     <string name="safeguard_msg">请输入「%1$s」确认删除：\n即当前时间加删除类型</string>
     <string name="safeguard_time_hint">如 %1$s</string>
     <string name="safeguard_wrong">时间不正确，删除已取消</string>
+
+    <!-- v2.18：独立日志 + 故障列表改造 -->
+    <string name="check_count_fmt">已操作 %1$d / 共 %2$d 项</string>
+    <string name="generate_independent_fmt">将为 %1$d 项操作分别生成独立日志。</string>
+    <string name="unsaved_changes">未保存的操作</string>
+    <string name="unsaved_changes_msg">有未保存的操作，是否保存并生成日志？</string>
+    <string name="save_and_generate">保存并生成</string>
+    <string name="discard_changes">不保存</string>
+    <string name="log_type_pass">通过</string>
+    <string name="fault_resolved_label">已处理</string>
+    <string name="del_resolution_reject">删除消除日志并驳回</string>
+    <string name="del_fault_and_resolution">删除此故障生成日志和消除日志</string>
+    <string name="undo">撤回</string>
 </resources>
