@@ -322,7 +322,7 @@ class Repository(private val db: AppDatabase) {
                     plannedDao.deleteForLog(id)
                 }
                 LogDeleteMode.DELETE_FAULT -> {
-                    // 删除故障日志：删FaultRecord + 关联消除日志 + 恢复PlannedItem
+                    // 删除故障日志：删FaultRecord + 关联消除日志 + 重新计算PlannedItem状态
                     val faults = faultDao.forLogOnce(id)
                     for (f in faults) {
                         // 查找并删除该故障的消除日志
@@ -334,7 +334,7 @@ class Repository(private val db: AppDatabase) {
                         markDeleted(DeletedItem.TBL_FAULTS, f.id)
                     }
                     faultDao.deleteForLog(id)
-                    plannedDao.resetForLog(id, now())
+                    recomputePlannedState(l.instanceId, l.testContent)
                     markDeleted(DeletedItem.TBL_LOGS, l.id)
                     logDao.delete(l)
                 }
@@ -346,7 +346,7 @@ class Repository(private val db: AppDatabase) {
                         faultDao.unpassSingle(f.id)
                     }
                     // 检测未消除故障 → 驳回重测
-                    revertPlannedIfHasFaults(l.instanceId, l.testContent)
+                    recomputePlannedState(l.instanceId, l.testContent)
                     markDeleted(DeletedItem.TBL_LOGS, l.id)
                     logDao.delete(l)
                 }
@@ -364,7 +364,7 @@ class Repository(private val db: AppDatabase) {
                     }
                     faultDao.deleteAll(matchedFaults)
                     // 检测未消除故障 → 驳回重测
-                    revertPlannedIfHasFaults(l.instanceId, l.testContent)
+                    recomputePlannedState(l.instanceId, l.testContent)
                     markDeleted(DeletedItem.TBL_LOGS, l.id)
                     logDao.delete(l)
                 }
@@ -373,17 +373,20 @@ class Repository(private val db: AppDatabase) {
     }
 
     /**
-     * 删除日志后检测：若该测试项仍有未消除故障，驳回PlannedItem为未测，
-     * 写回faultId，并自动删除通过日志（有故障的测试项不应有通过日志）。
+     * 删除故障类日志后重新计算PlannedItem状态（数据一致性核心）：
+     * 有未消除故障 → 删除通过日志 + 驳回为未测并写回faultId；
+     * 无未消除故障 → 若有有效通过日志（或本已是通过态）则保持「测试通过」并清除失效faultId，
+     *                  否则回退为待测（无故障且从未通过不该凭空标记为通过）。
      */
-    private suspend fun revertPlannedIfHasFaults(instanceId: String, content: String) {
+    private suspend fun recomputePlannedState(instanceId: String, content: String) {
         val pendingFaults = faultDao.pendingByInstanceAndContent(instanceId, content)
+        val items = plannedDao.byInstanceAndContentOnce(instanceId, content)
+        if (items.isEmpty()) return
+        val t = now()
         if (pendingFaults.isNotEmpty()) {
-            // 找到对应的PlannedItem
-            val items = plannedDao.byInstanceAndContentOnce(instanceId, content)
             val faultIdStr = pendingFaults.joinToString(",") { it.id }
             for (item in items) {
-                // 如果之前是通过状态，删除通过日志
+                // 有故障的测试项不应有通过日志：存在则一并删除
                 if (item.result == PlannedItem.RESULT_PASS && item.logId.isNotEmpty()) {
                     val passLog = logDao.getByIdOnce(item.logId)
                     if (passLog != null) {
@@ -391,14 +394,22 @@ class Repository(private val db: AppDatabase) {
                         logDao.delete(passLog)
                     }
                 }
-                // 驳回为未测，写回faultId
-                plannedDao.setResult(
-                    listOf(item.id), PlannedItem.RESULT_UNTESTED, 0L, "", faultIdStr
-                )
+                plannedDao.setResult(listOf(item.id), PlannedItem.RESULT_UNTESTED, 0L, "", faultIdStr)
             }
         } else {
-            // 没有未消除故障，正常重置
-            plannedDao.resetByInstanceAndContent(instanceId, content, now())
+            val decision = items.map { item ->
+                val hasPassLog = item.logId.isNotEmpty() &&
+                    logDao.getByIdOnce(item.logId)?.logType == DebugLog.LOG_TYPE_PASS
+                if (item.result == PlannedItem.RESULT_PASS || hasPassLog) {
+                    Triple(item.id, PlannedItem.RESULT_PASS, item.logId) // 保持/恢复「测试通过」
+                } else {
+                    Triple(item.id, PlannedItem.RESULT_UNTESTED, "")       // 从未通过 → 待测
+                }
+            }
+            for ((itemId, result, logId) in decision) {
+                val at = if (result == PlannedItem.RESULT_PASS) items.first { it.id == itemId }.doneAt else 0L
+                plannedDao.setResult(listOf(itemId), result, at, logId, "")
+            }
         }
     }
 
