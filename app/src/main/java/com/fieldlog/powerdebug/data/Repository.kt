@@ -515,7 +515,8 @@ class Repository(private val db: AppDatabase) {
      * 生成独立日志（永不合并）。
      * @param passIds 通过的测试项ID
      * @param failItems 新增故障: itemId -> [故障原因, ...]
-     * @param resolvedFaults 已消除的故障: itemId -> [faultId, ...]
+     * @param resolvedFaults 已消除的故障: itemId -> [faultId, ...]（新创建故障可用symptom文本）
+     * @param solutions 解决方法: faultId或symptom -> 文本（故障列表「通过」弹窗填写的）
      */
     suspend fun generateIndependentLogs(
         instanceId: String,
@@ -523,7 +524,8 @@ class Repository(private val db: AppDatabase) {
         failItems: Map<String, List<String>>,
         resolvedFaults: Map<String, List<String>>,
         tester: String,
-        actor: String
+        actor: String,
+        solutions: Map<String, String> = emptyMap()
     ) {
         val inst = instanceDao.getByIdOnce(instanceId)
             ?: throw IllegalArgumentException("柜子实例不存在")
@@ -594,6 +596,7 @@ class Repository(private val db: AppDatabase) {
                         )
                         logDao.insert(resolutionLog)
                         faultDao.passSingle(fr.id, t)
+                        solutions[faultId]?.let { sol -> faultDao.setSolution(fr.id, sol, t) }
                     }
                     // 如果该项所有故障都已解决 → 设为通过
                     val remainingFaultIds = mutableListOf<String>()
@@ -676,6 +679,11 @@ class Repository(private val db: AppDatabase) {
         faultDao.unpassSingle(faultId)
     }
 
+    /** 更新某条故障的解决方法（时间线消除条目点击编辑） */
+    suspend fun updateFaultSolution(faultId: String, solution: String) {
+        faultDao.setSolution(faultId, solution.trim(), now())
+    }
+
     /** 驳回已通过的测试项：删除通过日志 + 删除关联故障 + 重置PlannedItem为未测 */
     suspend fun rejectPassedItem(item: PlannedItem) {
         val t = now()
@@ -706,7 +714,17 @@ class Repository(private val db: AppDatabase) {
     suspend fun historyTimeline(instanceId: String, itemContent: String): List<Triple<DebugLog, String, List<FaultRecord>>> {
         val logs = logDao.byInstanceAndContentOnce(instanceId, itemContent)
         return logs.map { log ->
-            val faults = if (log.logType == DebugLog.LOG_TYPE_FAULT) faultDao.forLogOnce(log.id) else emptyList()
+            val faults = when (log.logType) {
+                DebugLog.LOG_TYPE_FAULT -> faultDao.forLogOnce(log.id)
+                // 消除日志：带回关联的已解决故障（含解决方法，供时间线显示与编辑）
+                DebugLog.LOG_TYPE_RESOLUTION -> {
+                    val hit = faultDao.byInstanceAndContentOnce(instanceId, itemContent)
+                        .filter { it.status == FaultRecord.STATUS_RESOLVED && it.symptom == log.remark }
+                    val latest = hit.maxByOrNull { it.resolvedAt }
+                    if (latest == null) emptyList() else listOf(latest)
+                }
+                else -> emptyList()
+            }
             Triple(log, log.remark, faults)
         }
     }

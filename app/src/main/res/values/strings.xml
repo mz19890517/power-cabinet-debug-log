@@ -350,4 +350,10 @@
     <string name="undo">撤回</string>
     <string name="pass_with_faults_msg">该项还有 %1$d 条未消除的故障，通过时将全部标记为已处理并生成消除日志。是否继续？</string>
     <string name="pass_resolve_all">全部消除并通过</string>
+
+    <!-- v2.19：解决方法（故障通过填写 + 时间线编辑显示） -->
+    <string name="solution_input_hint">解决方法（选填，如：更换保险丝）\n填写后该故障始终显示处理方法，可在消除记录中随时修改</string>
+    <string name="fault_pass_solution_title">故障通过 · %1$s</string>
+    <string name="timeline_solution_fmt"> · 方法：%1$s</string>
+    <string name="timeline_solution_edit_title">编辑解决方法 · %1$s</string>
 </resources>

@@ -112,11 +112,6 @@ class LogListFragment : Fragment() {
     // ---------- 时间线（点击日志条目） ----------
 
     private fun showTimelineFromLog(item: LogListItem) {
-        val tv = EditText(requireContext()).apply {
-            isEnabled = false
-            minLines = 1
-        }
-
         lifecycleScope.launch {
             val timeline = App.repo.historyTimeline(item.log.instanceId, item.log.testContent)
 
@@ -133,10 +128,20 @@ class LogListFragment : Fragment() {
                 setPadding(48, 32, 48, 16)
                 textSize = 15f
             }
+            val holder = arrayOfNulls<TimelineLogAdapter>(1)
             val rv = RecyclerView(requireContext()).apply {
                 layoutManager = LinearLayoutManager(requireContext())
-                adapter = TimelineLogAdapter(timeline)
             }
+            holder[0] = TimelineLogAdapter(
+                timeline,
+                onEditSolution = { log, fr ->
+                    showEditSolutionDialog(log, fr) {
+                        viewLifecycleOwner.lifecycleScope.launch {
+                            holder[0]?.submit(App.repo.historyTimeline(item.log.instanceId, item.log.testContent))
+                        }
+                    }
+                }
+            ).also { rv.adapter = it }
 
             val container = android.widget.LinearLayout(requireContext()).apply {
                 orientation = android.widget.LinearLayout.VERTICAL
@@ -160,6 +165,32 @@ class LogListFragment : Fragment() {
                 .setPositiveButton(R.string.close, null)
                 .show()
         }
+    }
+
+    /** 时间线消除条目：编辑/添加解决方法（同步到测试页同时间线） */
+    private fun showEditSolutionDialog(
+        log: com.fieldlog.powerdebug.data.db.DebugLog,
+        fr: com.fieldlog.powerdebug.data.db.FaultRecord,
+        onSaved: () -> Unit
+    ) {
+        val et = EditText(requireContext()).apply {
+            hint = getString(R.string.fault_solution)
+            setText(fr.solution)
+            minLines = 2
+            gravity = android.view.Gravity.TOP
+        }
+        AlertDialog.Builder(requireContext())
+            .setTitle(getString(R.string.timeline_solution_edit_title, log.remark))
+            .setView(et)
+            .setPositiveButton(R.string.save) { _, _ ->
+                val text = et.text?.toString()?.trim().orEmpty()
+                viewLifecycleOwner.lifecycleScope.launch {
+                    App.repo.updateFaultSolution(fr.id, text)
+                    onSaved()
+                }
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
     }
 
     // ---------- 删除逻辑（按logType分支） ----------
@@ -451,10 +482,16 @@ class LogAdapter(
     }
 }
 
-/** 时间线适配器（日志列表用） */
+/** 时间线适配器（日志列表用）；消除条目可点击编辑解决方法 */
 private class TimelineLogAdapter(
-    private val data: List<Triple<DebugLog, String, List<com.fieldlog.powerdebug.data.db.FaultRecord>>>
+    private var data: List<Triple<com.fieldlog.powerdebug.data.db.DebugLog, String, List<com.fieldlog.powerdebug.data.db.FaultRecord>>>,
+    private val onEditSolution: ((com.fieldlog.powerdebug.data.db.DebugLog, com.fieldlog.powerdebug.data.db.FaultRecord) -> Unit)? = null
 ) : RecyclerView.Adapter<TimelineLogAdapter.VH>() {
+
+    fun submit(newData: List<Triple<com.fieldlog.powerdebug.data.db.DebugLog, String, List<com.fieldlog.powerdebug.data.db.FaultRecord>>>) {
+        data = newData
+        notifyDataSetChanged()
+    }
 
     class VH(v: View) : RecyclerView.ViewHolder(v) {
         val tvLog: TextView = v.findViewById(R.id.tv_timeline_log)
@@ -470,7 +507,7 @@ private class TimelineLogAdapter(
     override fun getItemCount() = data.size
 
     override fun onBindViewHolder(h: VH, pos: Int) {
-        val (log, remark, _) = data[pos]
+        val (log, remark, faults) = data[pos]
         val ctx = h.itemView.context
         h.tvLog.text = ctx.getString(R.string.timeline_log_fmt, DT.full(log.createdAt), log.tester)
 
@@ -483,9 +520,18 @@ private class TimelineLogAdapter(
             }
             DebugLog.LOG_TYPE_RESOLUTION -> {
                 h.tvFaults.visibility = View.VISIBLE
-                h.tvFaults.text = "${ctx.getString(R.string.timeline_fault_fmt, remark)}  ${ctx.getString(R.string.fault_resolved_label)}"
+                val sol = faults.firstOrNull()?.solution.orEmpty()
+                h.tvFaults.text = buildString {
+                    append(ctx.getString(R.string.timeline_fault_fmt, remark))
+                    append("  ").append(ctx.getString(R.string.fault_resolved_label))
+                    if (sol.isNotBlank()) append(ctx.getString(R.string.timeline_solution_fmt, sol))
+                }
                 h.tvFaults.setTextColor(ctx.getColor(R.color.primary))
                 h.tvPass.visibility = View.GONE
+                val fr = faults.firstOrNull()
+                if (onEditSolution != null && fr != null) {
+                    h.itemView.setOnClickListener { onEditSolution(log, fr) }
+                }
             }
             else -> {
                 h.tvFaults.visibility = View.GONE

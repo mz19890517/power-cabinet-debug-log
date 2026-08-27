@@ -397,6 +397,10 @@ interface FaultRecordDao {
     @Query("UPDATE fault_records SET status = 0, resolvedAt = 0, updatedAt = :t WHERE id = :id AND status = 1")
     suspend fun unpassSingle(id: String, t: Long = System.currentTimeMillis())
 
+    /** 写入/更新解决方法（故障通过弹窗/时间线编辑共用） */
+    @Query("UPDATE fault_records SET solution = :solution, updatedAt = :t WHERE id = :id")
+    suspend fun setSolution(id: String, solution: String, t: Long = System.currentTimeMillis())
+
     /** 查某柜某测试项名称关联的故障记录（通过log.testContent匹配 + faultId直接查询） */
     @Query(
         """SELECT f.* FROM fault_records f
