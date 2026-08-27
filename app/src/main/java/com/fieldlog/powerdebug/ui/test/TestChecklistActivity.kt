@@ -784,8 +784,9 @@ private class TimelineAdapter(
                 h.tvFaults.setTextColor(Color.parseColor("#2E7D32"))
                 h.tvPass.visibility = View.GONE
                 val fr = faults.firstOrNull()
-                if (onEditSolution != null && fr != null) {
-                    h.itemView.setOnClickListener { onEditSolution(log, fr) }
+                val edit = onEditSolution
+                if (edit != null && fr != null) {
+                    h.itemView.setOnClickListener { edit(log, fr) }
                 }
             }
             else -> {
