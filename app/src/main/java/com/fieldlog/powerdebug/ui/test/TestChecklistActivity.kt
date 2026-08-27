@@ -232,6 +232,52 @@ class TestChecklistActivity : AppCompatActivity() {
 
     // ---------- 对话框 ----------
 
+    /** 统计某测试项未消除的故障数（DB + 本次新增暂存） */
+    private suspend fun countUnresolvedFaults(item: PlannedItem): Int {
+        var count = 0
+        // 本次新增的故障（暂存文本）
+        val newFaultText = failNotes[item.id]
+        if (!newFaultText.isNullOrBlank()) {
+            count += newFaultText.split("\n").map { it.trim() }.filter { it.isNotEmpty() }.size
+        }
+        // DB中已有的未解决故障
+        val resolved = resolvedFaultIds[item.id] ?: emptyList()
+        if (item.faultId.isNotBlank()) {
+            val faultIds = item.faultId.split(",").filter { it.isNotEmpty() && it !in resolved }
+            if (faultIds.isNotEmpty()) {
+                count += App.db.faultRecordDao().byIdsOnce(faultIds)
+                    .count { it.status == FaultRecord.STATUS_PENDING }
+            }
+        }
+        return count
+    }
+
+    /** 通过时有未消除故障：弹窗确认是否全部消除 */
+    private fun showPassWithFaultsConfirm(item: PlannedItem, faultCount: Int) {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.btn_pass)
+            .setMessage(getString(R.string.pass_with_faults_msg, faultCount))
+            .setPositiveButton(R.string.pass_resolve_all) { _, _ ->
+                // 自动消除所有未解决故障
+                autoResolveAllFaults(item)
+                passIds.add(item.id)
+                failNotes.remove(item.id)
+                adapter.notifyDataSetChanged()
+                refreshCount()
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    /** 自动将某测试项所有未解决故障标记为已消除 */
+    private fun autoResolveAllFaults(item: PlannedItem) {
+        val resolved = resolvedFaultIds.getOrPut(item.id) { mutableListOf() }
+        // 将PlannedItem中关联的未解决故障全部加入resolvedFaultIds
+        if (item.faultId.isNotBlank()) {
+            item.faultId.split(",").filter { it.isNotEmpty() && it !in resolved }.forEach { resolved.add(it) }
+        }
+    }
+
     /** 多故障输入对话框：换行分隔多条故障 */
     private fun showMultiFaultDialog(item: PlannedItem) {
         val et = EditText(this).apply {
@@ -324,25 +370,23 @@ class TestChecklistActivity : AppCompatActivity() {
             AlertDialog.Builder(this@TestChecklistActivity)
                 .setTitle("故障列表 · ${item.content}")
                 .setView(rv)
-                .setPositiveButton(R.string.fault_add_new) { _, _ ->
-                    showMultiFaultDialog(item)
-                }
-                .setNegativeButton(R.string.cancel, null)
-                .setOnDismissListener {
-                    // 关闭对话框时，将本次消除的故障记录到resolvedFaultIds
+                .setPositiveButton(R.string.confirm) { _, _ ->
+                    // 确认：将本次消除的故障记录到resolvedFaultIds
                     if (sessionResolved.isNotEmpty()) {
-                        // 从DB中找到这些故障的ID
                         val resolvedIds = dbFaults
                             .filter { it.symptom in sessionResolved && it.status == FaultRecord.STATUS_PENDING }
                             .map { it.id }
                         if (resolvedIds.isNotEmpty()) {
                             resolvedFaultIds.getOrPut(item.id) { mutableListOf() }.addAll(resolvedIds)
                         }
-                        // 更新UI：显示已处理状态
                         adapter.notifyDataSetChanged()
                         refreshCount()
                     }
                 }
+                .setNeutralButton(R.string.fault_add_new) { _, _ ->
+                    showMultiFaultDialog(item)
+                }
+                .setNegativeButton(R.string.cancel, null)
                 .show()
         }
     }
@@ -519,11 +563,19 @@ class TestChecklistActivity : AppCompatActivity() {
                 setOnClickListener {
                     if (markedPass) {
                         passIds.remove(item.id)
+                        notifyDataSetChanged(); refreshCount()
                     } else {
-                        passIds.add(item.id)
-                        failNotes.remove(item.id)
+                        lifecycleScope.launch {
+                            val unresolvedCount = countUnresolvedFaults(item)
+                            if (unresolvedCount > 0) {
+                                showPassWithFaultsConfirm(item, unresolvedCount)
+                            } else {
+                                passIds.add(item.id)
+                                failNotes.remove(item.id)
+                                notifyDataSetChanged(); refreshCount()
+                            }
+                        }
                     }
-                    notifyDataSetChanged(); refreshCount()
                 }
             }
 

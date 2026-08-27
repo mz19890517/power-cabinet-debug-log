@@ -312,7 +312,11 @@ class Repository(private val db: AppDatabase) {
         val l = logDao.getByIdOnce(id) ?: return
         db.withTransaction {
             when (mode) {
-                LogDeleteMode.RESTORE_PLANNED -> plannedDao.resetForLog(id, now())
+                LogDeleteMode.RESTORE_PLANNED -> {
+                    plannedDao.resetForLog(id, now())
+                    markDeleted(DeletedItem.TBL_LOGS, l.id)
+                    logDao.delete(l)
+                }
                 LogDeleteMode.PURGE_PLANNED -> {
                     plannedDao.forLogOnce(id).forEach { markDeleted(DeletedItem.TBL_PLANNED, it.id) }
                     plannedDao.deleteForLog(id)

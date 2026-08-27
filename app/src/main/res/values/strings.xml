@@ -348,4 +348,6 @@
     <string name="del_resolution_reject">删除消除日志并驳回</string>
     <string name="del_fault_and_resolution">删除此故障生成日志和消除日志</string>
     <string name="undo">撤回</string>
+    <string name="pass_with_faults_msg">该项还有 %1$d 条未消除的故障，通过时将全部标记为已处理并生成消除日志。是否继续？</string>
+    <string name="pass_resolve_all">全部消除并通过</string>
 </resources>
