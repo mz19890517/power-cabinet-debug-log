@@ -370,6 +370,8 @@ class Repository(private val db: AppDatabase) {
                 }
             }
         }
+        // 兜底自愈：删除日志后，凡故障记录已全部消失但仍标记「未通过」的幽灵测试项一律转「通过」
+        healGhostFailures()
     }
 
     /**
@@ -409,6 +411,34 @@ class Repository(private val db: AppDatabase) {
             for ((itemId, result, logId) in decision) {
                 val at = if (result == PlannedItem.RESULT_PASS) items.first { it.id == itemId }.doneAt else 0L
                 plannedDao.setResult(listOf(itemId), result, at, logId, "")
+            }
+        }
+    }
+
+    /**
+     * 兜底自愈（用户确认·简单粗暴原则）：凡测试项 faultId 指向的故障记录已全部不存在
+     * （幽灵状态——界面显示「原因见日志」但故障列表为空，来源可以是删除日志、旧快照合并、
+     * 历史版本残留等任何路径），一律纠正为「测试通过」。
+     * 仅处理 faultId 完全悬空的项；故障记录仍存在（含已解决待复测）的项不动，
+     * 遵守「故障标已解决不会自动过关，必须人工复测」的产品规则。
+     */
+    suspend fun healGhostFailures() {
+        val items = plannedDao.allOnce().filter { it.faultId.isNotBlank() }
+        if (items.isEmpty()) return
+        val allIds = items.flatMap { it.faultId.split(",") }.filter { it.isNotEmpty() }.distinct()
+        if (allIds.isEmpty()) return
+        val existing = faultDao.byIdsOnce(allIds).map { it.id }.toHashSet()
+        val t = now()
+        for (item in items) {
+            val ids = item.faultId.split(",").filter { it.isNotEmpty() }
+            if (ids.isEmpty()) continue
+            // faultId 全部找不到对应记录 → 该测试项实际已无故障 → 转为「测试通过」
+            if (ids.all { it !in existing }) {
+                plannedDao.setResult(
+                    listOf(item.id), PlannedItem.RESULT_PASS,
+                    if (item.doneAt > 0) item.doneAt else t,
+                    item.logId, ""
+                )
             }
         }
     }

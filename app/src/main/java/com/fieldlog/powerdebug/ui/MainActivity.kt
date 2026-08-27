@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.commit
+import com.fieldlog.powerdebug.App
 import com.fieldlog.powerdebug.R
 import com.fieldlog.powerdebug.databinding.ActivityMainBinding
 import com.fieldlog.powerdebug.ui.device.DeviceFragment
@@ -36,6 +37,12 @@ class MainActivity : AppCompatActivity() {
         }
 
         maybeAutoSync()
+
+        // 兜底自愈：应用启动即修正「标记未通过但故障记录已全部不存在」的幽灵测试项，
+        // 保证项目/柜子卡片与测试清单不会残留「原因见日志但无故障」的假未通过状态
+        CoroutineScope(Dispatchers.IO).launch {
+            runCatching { App.repo.healGhostFailures() }
+        }
     }
 
     /**

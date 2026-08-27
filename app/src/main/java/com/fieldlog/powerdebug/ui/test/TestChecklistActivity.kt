@@ -97,6 +97,8 @@ class TestChecklistActivity : AppCompatActivity() {
 
     private fun loadData() {
         lifecycleScope.launch {
+            // 兜底自愈：先清掉「原因见日志但故障记录已不存在」的幽灵未通过项再加载
+            App.repo.healGhostFailures()
             val inst = App.repo.getInstance(instanceId) ?: run { finish(); return@launch }
             supportActionBar?.title = "开始测试 · ${inst.name}"
             refreshInfo()

@@ -58,6 +58,11 @@ class PlannedManageActivity : AppCompatActivity() {
             adapter = this@PlannedManageActivity.adapter
         }
 
+        // 兜底自愈：先清掉「原因见日志但故障记录已不存在」的幽灵未通过项再加载列表
+        lifecycleScope.launch {
+            App.repo.healGhostFailures()
+        }
+
         lifecycleScope.launch {
             val inst = App.repo.getInstance(instanceId) ?: run { finish(); return@launch }
             typeId = inst.typeId
