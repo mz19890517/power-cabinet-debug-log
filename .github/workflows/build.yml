@@ -39,7 +39,7 @@ jobs:
         env:
           SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
           SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
-        run: gradle -p "$GITHUB_WORKSPACE" assembleDebug --no-daemon --stacktrace
+        run: gradle -p "$GITHUB_WORKSPACE" clean assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
