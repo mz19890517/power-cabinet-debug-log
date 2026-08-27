@@ -373,8 +373,8 @@ class Repository(private val db: AppDatabase) {
     }
 
     /**
-     * 删除日志后检测：若该测试项仍有未消除故障，驳回PlannedItem为未测，并写回faultId。
-     * 这样测试列表会显示该测试项有故障，用户可在故障列表中操作。
+     * 删除日志后检测：若该测试项仍有未消除故障，驳回PlannedItem为未测，
+     * 写回faultId，并自动删除通过日志（有故障的测试项不应有通过日志）。
      */
     private suspend fun revertPlannedIfHasFaults(instanceId: String, content: String) {
         val pendingFaults = faultDao.pendingByInstanceAndContent(instanceId, content)
@@ -383,6 +383,15 @@ class Repository(private val db: AppDatabase) {
             val items = plannedDao.byInstanceAndContentOnce(instanceId, content)
             val faultIdStr = pendingFaults.joinToString(",") { it.id }
             for (item in items) {
+                // 如果之前是通过状态，删除通过日志
+                if (item.result == PlannedItem.RESULT_PASS && item.logId.isNotEmpty()) {
+                    val passLog = logDao.getByIdOnce(item.logId)
+                    if (passLog != null) {
+                        markDeleted(DeletedItem.TBL_LOGS, passLog.id)
+                        logDao.delete(passLog)
+                    }
+                }
+                // 驳回为未测，写回faultId
                 plannedDao.setResult(
                     listOf(item.id), PlannedItem.RESULT_UNTESTED, 0L, "", faultIdStr
                 )
