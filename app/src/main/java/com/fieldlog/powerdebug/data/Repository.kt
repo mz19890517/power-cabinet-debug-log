@@ -1444,13 +1444,54 @@ class Repository(private val db: AppDatabase) {
     private suspend fun applyMerge(pb: ParsedBackup): MergeResult {
         val r = MergeResult()
         db.withTransaction {
-            // ---------- 0) 墓碑先行：远端墓碑落库（IGNORE去重）→ 统一应用删除 ----------
+            // ---------- 0) 墓碑先行：远端墓碑落库（IGNORE去重，(表,记录id)保留首条=最早删除时刻） ----------
             if (pb.tombs.isNotEmpty()) tombDao.insertAll(pb.tombs)
-            val tombs = HashMap<String, HashSet<String>>()
-            tombDao.allOnce().forEach { tombs.getOrPut(it.tbl) { HashSet() }.add(it.itemId) }
-            fun dead(tbl: String, id: String) = tombs[tbl]?.contains(id) == true
 
-            // 经DAO删除（非裸SQL），外键级联与本机直接删除完全一致，各设备最终状态收敛
+            // 0.1 墓碑「新者胜」调和：删除时刻早于该行已知最新更新（本机存活行 ∪ 快照携带行）
+            //     → 墓碑被击败不生效并自清理，防止旧机删除清掉他机较新数据，也避免在应用删除前
+            //       就先对胜出的父行做级联误删。留存墓碑=删除确实晚于该行已知全部更新，删除成立。
+            // 汇总各表(本机+快照)每行已知最新更新时间
+            val knownRows = HashMap<String, HashMap<String, Long>>()
+            fun track(tbl: String, id: String, updatedAt: Long) {
+                val m = knownRows.getOrPut(tbl) { HashMap() }
+                if (m[id] == null || updatedAt > m[id]!!) m[id] = updatedAt
+            }
+            projectDao.allOnce().forEach { track(DeletedItem.TBL_PROJECTS, it.id, it.updatedAt) }
+            pb.projects.forEach { track(DeletedItem.TBL_PROJECTS, it.id, it.updatedAt) }
+            typeDao.allOnce().forEach { track(DeletedItem.TBL_TYPES, it.id, it.updatedAt) }
+            pb.types.forEach { track(DeletedItem.TBL_TYPES, it.id, it.updatedAt) }
+            candDao.allOnce().forEach { track(DeletedItem.TBL_CANDS, it.id, it.updatedAt) }
+            pb.cands.forEach { track(DeletedItem.TBL_CANDS, it.id, it.updatedAt) }
+            instanceDao.allOnce().forEach { track(DeletedItem.TBL_INSTANCES, it.id, it.updatedAt) }
+            pb.instances.forEach { track(DeletedItem.TBL_INSTANCES, it.id, it.updatedAt) }
+            logDao.allOnce().forEach { track(DeletedItem.TBL_LOGS, it.id, it.updatedAt) }
+            pb.logs.forEach { track(DeletedItem.TBL_LOGS, it.id, it.updatedAt) }
+            faultDao.allOnce().forEach { track(DeletedItem.TBL_FAULTS, it.id, it.updatedAt) }
+            pb.faults.forEach { track(DeletedItem.TBL_FAULTS, it.id, it.updatedAt) }
+            plannedDao.allOnce().forEach { track(DeletedItem.TBL_PLANNED, it.id, it.updatedAt) }
+            pb.planned.forEach { track(DeletedItem.TBL_PLANNED, it.id, it.updatedAt) }
+            debuggerDao.allOnce().forEach { track(DeletedItem.TBL_DEBUGGERS, it.id, it.updatedAt) }
+            pb.debuggers.forEach { track(DeletedItem.TBL_DEBUGGERS, it.id, it.updatedAt) }
+
+            val tombs = HashMap<String, HashMap<String, Long>>()
+            tombDao.allOnce().forEach { tombs.getOrPut(it.tbl) { HashMap() }.put(it.itemId, it.deletedAt) }
+
+            /** 移除被击败墓碑（本机DB + 内存映射同步清除） */
+            suspend fun defeatTomb(tbl: String, id: String) {
+                tombDao.deleteByRow(tbl, id)
+                tombs[tbl]?.remove(id)
+            }
+            tombs.forEach { (tbl, m) ->
+                val defeated = m.filter { (id, dA) ->
+                    val latest = knownRows[tbl]?.get(id)
+                    latest != null && latest > dA
+                }.keys
+                defeated.forEach { id -> defeatTomb(tbl, id) }
+            }
+            /** 该行是否仍被墓碑判死（调和后留存墓碑为真删除） */
+            fun dead(tbl: String, id: String) = tombs[tbl]?.containsKey(id) == true
+
+            // 0.2 统一应用删除：经DAO删除（非裸SQL），外键级联与本机直接删除完全一致，各设备最终状态收敛
             var applied = 0
             projectDao.allOnce().filter { dead(DeletedItem.TBL_PROJECTS, it.id) }.let {
                 if (it.isNotEmpty()) { projectDao.deleteAll(it); applied += it.size }

@@ -559,18 +559,22 @@ interface DebuggerDao {
     suspend fun wipe()
 }
 
-/** 删除墓碑表：只增不改；合并时先落库再按表应用删除（经DAO删除以触发一致的级联） */
+/** 删除墓碑表：只增、被击败时按(表,记录id)删除；合并时先落库→新者胜调和→按表应用删除（经DAO删除以触发一致的级联） */
 @Dao
 interface DeletedItemDao {
     @Query("SELECT * FROM deleted_items ORDER BY deletedAt")
     suspend fun allOnce(): List<DeletedItem>
 
-    /** IGNORE：同(表,记录id)重复墓碑静默跳过，保留首条 */
+    /** IGNORE：同(表,记录id)重复墓碑静默跳过，保留首条（最早删除时刻） */
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(item: DeletedItem)
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAll(items: List<DeletedItem>)
+
+    /** 墓碑被击败（删除时刻早于该行最后更新，新者胜）时移除，防旧删除误清他机较新数据 */
+    @Query("DELETE FROM deleted_items WHERE tbl = :tbl AND itemId = :itemId")
+    suspend fun deleteByRow(tbl: String, itemId: String)
 
     @Query("DELETE FROM deleted_items")
     suspend fun wipe()
