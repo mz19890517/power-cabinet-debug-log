@@ -342,6 +342,22 @@
             android:textColor="@color/danger"
             android:textSize="12sp" />
 
+        <Button
+            android:id="@+id/btn_rollback"
+            style="?attr/materialButtonOutlinedStyle"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="18dp"
+            android:text="@string/tools_rollback" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/tools_rollback_desc"
+            android:textColor="@color/danger"
+            android:textSize="12sp" />
+
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

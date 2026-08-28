@@ -113,6 +113,8 @@
     <string name="tools_backup_desc">导出全部数据为单个JSON文件，可用于换机或存档</string>
     <string name="tools_restore">恢复数据 (JSON)</string>
     <string name="tools_restore_desc">从备份JSON恢复，⚠ 将覆盖当前全部数据</string>
+    <string name="tools_rollback">从备份找回被删记录</string>
+    <string name="tools_rollback_desc">扫描备份中本机已缺失的记录并权威插回（自动清除陈旧删除标记）。用于丢失的故障/消除日志恢复，仅需一台手机执行，其余手机靠同步收敛。</string>
     <string name="stats_title">数据统计</string>
     <string name="about_offline">数据仅存储于本机SQLite；仅在你主动使用WebDAV同步时才访问自己配置的服务器，不集成任何第三方SDK。\n备份文件为标准JSON（schemaVersion 2），可供后期电脑端/网页端直接读取。</string>
     <string name="export_ok">导出成功：%1$s</string>
@@ -121,6 +123,10 @@
     <string name="restore_confirm_msg">将清空当前全部数据，并导入备份中的：\n项目 %1$d · 类型 %2$d · 柜子 %3$d · 日志 %4$d · 故障 %5$d\n\n此操作不可撤销，确定继续吗？</string>
     <string name="restore_ok">恢复成功</string>
     <string name="restore_bad_file">文件无效或已损坏，未做任何修改</string>
+    <string name="rollback_confirm_title">确认找回被删记录</string>
+    <string name="rollback_confirm_msg">备份中存在本机已缺失的记录，将找回并刷新时间戳（旧的删除标记会被一并清除，下次同步传播回全队）：\n\n日志 %1$d 条 · 故障 %2$d 条 · 柜子 %3$d 台 · 待测项 %4$d 条\n项目 %5$d · 类型 %6$d · 候选项 %7$d · 调试员 %8$d\n\n仅本机执行即可，其余手机靠同步自动收敛。确定继续？</string>
+    <string name="rollback_none">备份中未发现本机缺失的记录，无需找回</string>
+    <string name="rollback_ok">找回成功：%1$d 条记录已恢复（下次同步将传播回全队）</string>
     <string name="op_failed">操作失败：%1$s</string>
 
     <!-- 账号与WebDAV同步 -->

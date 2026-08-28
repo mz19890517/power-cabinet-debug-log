@@ -36,8 +36,8 @@ object WebDavSync {
             GZIPOutputStream(out).use { it.write(bytes) }
         }.toByteArray()
 
-    /** 按魔数识别gzip（1f 8b）并解压；旧版明文快照原样返回 */
-    private fun decodeSnapshot(bytes: ByteArray): String {
+    /** 按魔数识别gzip（1f 8b）并解压；旧版明文快照原样返回。备份/找回工具共用此识别入口 */
+    fun decodeSnapshot(bytes: ByteArray): String {
         val isGzip = bytes.size >= 2 && bytes[0] == 0x1f.toByte() && bytes[1] == 0x8b.toByte()
         return if (isGzip)
             GZIPInputStream(bytes.inputStream()).use { it.readBytes() }.toString(Charsets.UTF_8)

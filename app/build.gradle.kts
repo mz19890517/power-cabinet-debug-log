@@ -12,8 +12,8 @@ android {
         applicationId = "com.fieldlog.powerdebug"
         minSdk = 28
         targetSdk = 34
-        versionCode = 24
-        versionName = "2.21"
+        versionCode = 25
+        versionName = "2.22"
     }
 
     // 签名密码经环境变量注入（GitHub Secrets），仓库内不出现明文

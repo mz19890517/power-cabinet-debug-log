@@ -25,11 +25,12 @@
 
 ## 数据库与备份格式
 
-- Room schema 当前 version=6（迁移链 1→2→3→4→5→6 必须保持完整，禁止 fallbackToDestructiveMigration）
-- JSON 备份 schemaVersion=6，字段名=数据库列名，是将来 PC/网页端的交换格式；v2.10 起快照经 gzip 压缩上传，读取按魔数(1f 8b)自动兼容明文旧格式
+- Room schema 当前 version=10（迁移链 1→2→3→…→10 必须保持完整，禁止 fallbackToDestructiveMigration）
+- JSON 备份 schemaVersion=9，字段名=数据库列名，是将来 PC/网页端的交换格式；v2.10 起快照经 gzip 压缩上传，读取按魔数(1f 8b)自动兼容明文旧格式（util/WebDavSync.decodeSnapshot，公开可复用）
 - 新增表/字段：DB version+1 写纯SQL迁移 + 备份版本+1 + parseBackup/restoreJson/merge 三处同步 + README 记录变更说明
 - 诊断日志：util/SyncLog.kt（同步过程）+ util/CrashLog.kt（全局未捕获异常黑匣子，App.onCreate 安装），工具页「查看同步日志」可查看/复制/清空——排查现场问题的标准手段
 - 合并语义：UUID主键按 id 去重插入，同 id 冲突 updatedAt 新者胜；**删除通过墓碑传播且同样"新者胜"**（v6 起 deleted_items 表：显式删除入口写墓碑；合并先落库远端墓碑→比对 墓碑.deletedAt 与本机存活行∪快照携带行最新 updatedAt：删除早于该行更新→墓碑被击败、自清理（tombDao.deleteByRow）并保留/插入该行；删除晚于该行已知全部更新→按表经DAO删除触发级联→跳过已删id与父链已断的孤儿行。防止被删数据借旧快照复活，也防旧删除（v2.9-v2.20 无条件永久墓碑）清掉他机较新数据）
+- 找回被删记录（v2.22 Repository.rollbackFromBackup）：扫描备份（明文/gzip 均可）中"本机缺失"的行权威插回，找回行统一刷新 updatedAt=now 并清对应墓碑→下次同步以"新者胜"传播回全队；工具页「从备份找回被删记录」（先预览计数→确认→写库）。仅一台手机执行即可恢复已全端删除的数据
 
 ## 业务模型速查
 

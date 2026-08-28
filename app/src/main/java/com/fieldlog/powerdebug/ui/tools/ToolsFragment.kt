@@ -57,6 +57,10 @@ class ToolsFragment : Fragment() {
         ActivityResultContracts.OpenDocument()
     ) { uri -> uri?.let { doRestore(it) } }
 
+    private val rollbackLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri -> uri?.let { doRollback(it) } }
+
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
     ): View {
@@ -76,6 +80,9 @@ class ToolsFragment : Fragment() {
         }
         b.btnRestore.setOnClickListener {
             restoreLauncher.launch(arrayOf(JSON_MIME, "text/*", "application/octet-stream"))
+        }
+        b.btnRollback.setOnClickListener {
+            rollbackLauncher.launch(arrayOf(JSON_MIME, "text/*", "application/octet-stream"))
         }
 
         // ---- 账号与同步 ----
@@ -567,6 +574,54 @@ class ToolsFragment : Fragment() {
             count("projects"), count("cabinetTypes"), count("instances"),
             count("logs"), count("faults")
         )
+    }
+
+    // ---------- 从备份找回被删记录（v2.22） ----------
+
+    private fun doRollback(uri: Uri) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                // 明文JSON / WebDAV gzip快照按魔数统一识别解压
+                val bytes = withContext(Dispatchers.IO) {
+                    requireContext().contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        ?: throw IllegalStateException("无法读取文件")
+                }
+                val text = WebDavSync.decodeSnapshot(bytes)
+                // 先只扫描：统计备份中本机缺失、将被找回的各表条数
+                val counts = withContext(Dispatchers.Default) {
+                    App.repo.rollbackFromBackup(text, apply = false)
+                }
+                if (counts.total == 0) {
+                    toast(R.string.rollback_none)
+                    return@launch
+                }
+                AlertDialog.Builder(requireContext())
+                    .setTitle(R.string.rollback_confirm_title)
+                    .setIcon(android.R.drawable.ic_dialog_alert)
+                    .setMessage(
+                        getString(
+                            R.string.rollback_confirm_msg,
+                            counts.logs, counts.faults, counts.instances, counts.planned,
+                            counts.projects, counts.types, counts.cands, counts.debuggers
+                        )
+                    )
+                    .setPositiveButton(R.string.confirm) { _, _ ->
+                        viewLifecycleOwner.lifecycleScope.launch {
+                            try {
+                                val r = App.repo.rollbackFromBackup(text, apply = true)
+                                toast(getString(R.string.rollback_ok, r.total))
+                                refreshStats()
+                            } catch (e: Exception) {
+                                toast(getString(R.string.op_failed, e.message ?: e.javaClass.simpleName))
+                            }
+                        }
+                    }
+                    .setNegativeButton(R.string.cancel, null)
+                    .show()
+            } catch (e: Exception) {
+                toast(R.string.restore_bad_file)
+            }
+        }
     }
 
     companion object {

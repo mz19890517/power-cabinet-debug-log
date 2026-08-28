@@ -45,6 +45,17 @@ data class MergeResult(
     var appliedTombs: Int = 0
 )
 
+/** 从备份找回被删记录的结果：各表找回条数（total=合计） */
+data class RollbackResult(
+    var projects: Int = 0, var types: Int = 0,
+    var cands: Int = 0,
+    var instances: Int = 0, var logs: Int = 0,
+    var faults: Int = 0, var planned: Int = 0,
+    var debuggers: Int = 0
+) {
+    val total get() = projects + types + cands + instances + logs + faults + planned + debuggers
+}
+
 /** 删除日志时，对其完成的预选待测项的处置方式（用户弹窗二选一） */
 enum class LogDeleteMode {
     /** 删除通过日志：恢复预选待测项 */
@@ -1596,6 +1607,90 @@ class Repository(private val db: AppDatabase) {
             }
             debuggerDao.insertAll(insD); debuggerDao.updateAll(updD)
             r.newDebuggers = insD.size; r.updDebuggers = updD.size
+        }
+        return r
+    }
+
+    /**
+     * 从备份找回被删记录（v2.22）：把备份中"本机已缺失"的行作为权威插回（父表→子表顺序、孤儿跳过、
+     * 内容去重冲突跳过），全部刷新 updatedAt=当前时刻——保证任何现存删除墓碑在合并时"新者胜"被击败、
+     * 本机随后上传快照即可把找回的记录连同击败结果传播回全队。
+     * apply=false 只扫描统计（找回面板预览用，不写库），结果口径与真实执行完全一致。
+     * 输入为已按魔数解压过的备份文本（明文/gzip 均可经 WebDavSync.decodeSnapshot 转换）。
+     */
+    suspend fun rollbackFromBackup(text: String, apply: Boolean): RollbackResult {
+        // 只支持 v2+（UUID主键）备份：v1 旧备份会被重映射为全新UUID，找回=整库重复，应走「恢复数据」
+        val root = JSONObject(text)
+        require(root.optString("app") == BACKUP_APP_TAG) { "不是本应用的备份文件" }
+        require(root.optInt("schemaVersion", 1) >= 2) { "旧版(v1)备份请使用「恢复数据」，找回功能只支持 UUID 主键备份" }
+        val pb = parseBackup(text)
+        val r = RollbackResult()
+        val t = now() // 找回行时钟统一刷新到当前，确保"新者胜"压过一切历史墓碑
+
+        // 本机现状（各表一次读取）
+        val lp = projectDao.allOnce().associateBy { it.id }
+        val lt = typeDao.allOnce().associateBy { it.id }
+        val lc = candDao.allOnce()
+        val lcById = lc.associateBy { it.id }
+        val lcPair = lc.map { it.typeId to it.content }.toHashSet()
+        val li = instanceDao.allOnce().associateBy { it.id }
+        val ll = logDao.allOnce().associateBy { it.id }
+        val lf = faultDao.allOnce().associateBy { it.id }
+        val lpl = plannedDao.allOnce()
+        val lplById = lpl.associateBy { it.id }
+        val lplPair = lpl.map { it.instanceId to it.content }.toHashSet()
+        val ld = debuggerDao.allOnce()
+        val ldById = ld.associateBy { it.id }
+        val ldNames = ld.map { it.name }.toHashSet()
+
+        // 父表在前：凡备份有、本机无的行都算被删、权威插回（除非父链断 / 内容去重冲突）
+        val insP = pb.projects.filter { it.id !in lp }.map { it.copy(updatedAt = t) }
+        r.projects = insP.size
+        val insT = pb.types.filter { it.id !in lt }.map { it.copy(updatedAt = t) }
+        r.types = insT.size
+        val aliveP = lp.keys + insP.map { it.id }
+        val aliveT = lt.keys + insT.map { it.id }
+        val insC = pb.cands.filter {
+            it.id !in lcById && it.typeId in aliveT && (it.typeId to it.content) !in lcPair
+        }.map { it.copy(updatedAt = t) }
+        r.cands = insC.size
+        val insI = pb.instances.filter { it.id !in li && it.projectId in aliveP && it.typeId in aliveT }
+            .map { it.copy(updatedAt = t) }
+        r.instances = insI.size
+        val aliveI = li.keys + insI.map { it.id }
+        val insL = pb.logs.filter { it.id !in ll && it.instanceId in aliveI }.map { it.copy(updatedAt = t) }
+        r.logs = insL.size
+        val aliveL = ll.keys + insL.map { it.id }
+        val insF = pb.faults.filter { it.id !in lf && (it.logId.isBlank() || it.logId in aliveL) }
+            .map { it.copy(updatedAt = t) }
+        r.faults = insF.size
+        val insPl = pb.planned.filter {
+            it.id !in lplById && it.instanceId in aliveI && (it.instanceId to it.content) !in lplPair
+        }.map { it.copy(updatedAt = t) }
+        r.planned = insPl.size
+        val insD = pb.debuggers.filter { it.id !in ldById && it.name !in ldNames }.map { it.copy(updatedAt = t) }
+        r.debuggers = insD.size
+
+        if (apply) {
+            db.withTransaction {
+                projectDao.insertAll(insP)
+                typeDao.insertAll(insT)
+                candDao.insertAll(insC)
+                instanceDao.insertAll(insI)
+                logDao.insertAll(insL)
+                faultDao.upsertAll(insF)
+                plannedDao.insertAll(insPl)
+                debuggerDao.insertAll(insD)
+                // 一并清掉本次找回行的墓碑：行时钟已刷新为"新者胜"，留存墓碑必然被击败，直接自清理
+                insP.forEach { tombDao.deleteByRow(DeletedItem.TBL_PROJECTS, it.id) }
+                insT.forEach { tombDao.deleteByRow(DeletedItem.TBL_TYPES, it.id) }
+                insC.forEach { tombDao.deleteByRow(DeletedItem.TBL_CANDS, it.id) }
+                insI.forEach { tombDao.deleteByRow(DeletedItem.TBL_INSTANCES, it.id) }
+                insL.forEach { tombDao.deleteByRow(DeletedItem.TBL_LOGS, it.id) }
+                insF.forEach { tombDao.deleteByRow(DeletedItem.TBL_FAULTS, it.id) }
+                insPl.forEach { tombDao.deleteByRow(DeletedItem.TBL_PLANNED, it.id) }
+                insD.forEach { tombDao.deleteByRow(DeletedItem.TBL_DEBUGGERS, it.id) }
+            }
         }
         return r
     }
