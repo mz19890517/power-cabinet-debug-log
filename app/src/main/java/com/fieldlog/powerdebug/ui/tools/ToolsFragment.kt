@@ -25,6 +25,7 @@ import com.fieldlog.powerdebug.core.WebDavClient
 import com.fieldlog.powerdebug.core.XlsxWriter
 import com.fieldlog.powerdebug.data.ExportFilter
 import com.fieldlog.powerdebug.data.Repository
+import com.fieldlog.powerdebug.data.RollbackPreview
 import com.fieldlog.powerdebug.data.db.TesterAccount
 import com.fieldlog.powerdebug.ui.FilterDialogHelper
 import com.fieldlog.powerdebug.databinding.FragmentToolsBinding
@@ -587,12 +588,10 @@ class ToolsFragment : Fragment() {
                         ?: throw IllegalStateException("无法读取文件")
                 }
                 val text = WebDavSync.decodeSnapshot(bytes)
-                // 先只扫描：统计备份中本机缺失、将被找回的各表条数
-                val counts = withContext(Dispatchers.Default) {
-                    App.repo.rollbackFromBackup(text, apply = false)
-                }
-                if (counts.total == 0) {
-                    toast(R.string.rollback_none)
+                // 先只扫描：本机缺失行 + 备份/本机日志构成
+                val p = withContext(Dispatchers.Default) { App.repo.rollbackPreview(text) }
+                if (p.missingTotal == 0) {
+                    showRollbackNoneDialog(p)
                     return@launch
                 }
                 AlertDialog.Builder(requireContext())
@@ -601,8 +600,8 @@ class ToolsFragment : Fragment() {
                     .setMessage(
                         getString(
                             R.string.rollback_confirm_msg,
-                            counts.logs, counts.faults, counts.instances, counts.planned,
-                            counts.projects, counts.types, counts.cands, counts.debuggers
+                            p.missing.logs, p.missing.faults, p.missing.instances, p.missing.planned,
+                            p.missing.projects, p.missing.types, p.missing.cands, p.missing.debuggers
                         )
                     )
                     .setPositiveButton(R.string.confirm) { _, _ ->
@@ -622,6 +621,24 @@ class ToolsFragment : Fragment() {
                 toast(R.string.restore_bad_file)
             }
         }
+    }
+
+    /** 「备份中无本机缺失记录」时，展示备份 vs 本机日志构成，帮用户判断所选备份是否丢失前的产物 */
+    private fun showRollbackNoneDialog(p: RollbackPreview) {
+        AlertDialog.Builder(requireContext())
+            .setTitle(R.string.rollback_none_title)
+            .setIcon(android.R.drawable.ic_dialog_info)
+            .setMessage(
+                getString(
+                    R.string.rollback_none_msg,
+                    p.backupLogs,
+                    p.backupLogs - p.backupFaultLogs - p.backupResolutionLogs,
+                    p.backupFaultLogs, p.backupResolutionLogs, p.backupFaultRecords,
+                    p.localLogs, p.localFaultLogs, p.localResolutionLogs, p.localFaultRecords
+                )
+            )
+            .setPositiveButton(R.string.close, null)
+            .show()
     }
 
     companion object {

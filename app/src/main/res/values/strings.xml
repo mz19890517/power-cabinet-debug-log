@@ -125,7 +125,8 @@
     <string name="restore_bad_file">文件无效或已损坏，未做任何修改</string>
     <string name="rollback_confirm_title">确认找回被删记录</string>
     <string name="rollback_confirm_msg">备份中存在本机已缺失的记录，将找回并刷新时间戳（旧的删除标记会被一并清除，下次同步传播回全队）：\n\n日志 %1$d 条 · 故障 %2$d 条 · 柜子 %3$d 台 · 待测项 %4$d 条\n项目 %5$d · 类型 %6$d · 候选项 %7$d · 调试员 %8$d\n\n仅本机执行即可，其余手机靠同步自动收敛。确定继续？</string>
-    <string name="rollback_none">备份中未发现本机缺失的记录，无需找回</string>
+    <string name="rollback_none_title">备份中无缺失记录</string>
+    <string name="rollback_none_msg">所选备份里没有本机已缺失的记录，因此没有可找回的内容。请对比下面备份与本机的日志构成，判断该备份是否为丢失之前的产物：\n\n【备份】日志共 %1$d 条（通过 %2$d · 故障 %3$d · 消除 %4$d），故障记录 %5$d 条\n\n【本机】日志共 %6$d 条（故障 %7$d · 消除 %8$d），故障记录 %9$d 条\n\n若备份中的故障/消除日志为 0，说明这份备份生成于丢失之后，请改选更早的备份（如坚果云文件历史）重试。</string>
     <string name="rollback_ok">找回成功：%1$d 条记录已恢复（下次同步将传播回全队）</string>
     <string name="op_failed">操作失败：%1$s</string>
 
