@@ -31,6 +31,7 @@ import com.fieldlog.powerdebug.ui.FilterDialogHelper
 import com.fieldlog.powerdebug.databinding.FragmentToolsBinding
 import com.fieldlog.powerdebug.util.CrashLog
 import com.fieldlog.powerdebug.util.DT
+import com.fieldlog.powerdebug.util.FixLogStore
 import com.fieldlog.powerdebug.util.SyncLog
 import com.fieldlog.powerdebug.util.SyncStore
 import com.fieldlog.powerdebug.util.WebDavSync
@@ -86,6 +87,7 @@ class ToolsFragment : Fragment() {
             rollbackLauncher.launch(arrayOf(JSON_MIME, "text/*", "application/octet-stream"))
         }
         b.btnFixTypes.setOnClickListener { doFixLogTypes() }
+        b.btnFixTypesUndo.setOnClickListener { doUndoFixLogTypes() }
 
         // ---- 账号与同步 ----
         b.btnLogin.setOnClickListener { showLoginDialog() }
@@ -642,26 +644,27 @@ class ToolsFragment : Fragment() {
             .show()
     }
 
-    // ---------- 修复日志类型（v2.24） ----------
+    // ---------- 修复/撤销日志类型（v2.24/v2.25） ----------
 
-    /** 把被故障记录指向却显示为「通过」的日志重分类为「故障」，恢复列表/筛选/导出的类型标注 */
+    /** 把被故障记录指向却显示为「通过」的日志重分类为「故障」，备注=已解决故障现象的日志重分类为「消除」 */
     private fun doFixLogTypes() {
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                val r = withContext(Dispatchers.Default) { App.repo.reclassifyFaultLogs(preview = true) }
-                if (r.logs == 0) {
+                val r = withContext(Dispatchers.Default) { App.repo.reclassifyLogTypes(preview = true) }
+                if (r.total == 0) {
                     toast(R.string.fix_types_none)
                     return@launch
                 }
                 AlertDialog.Builder(requireContext())
                     .setTitle(R.string.fix_types_confirm_title)
                     .setIcon(android.R.drawable.ic_dialog_info)
-                    .setMessage(getString(R.string.fix_types_confirm_msg, r.logs, r.faults))
+                    .setMessage(getString(R.string.fix_types_confirm_msg, r.faultLogs, r.attachedFaults, r.resolutionLogs))
                     .setPositiveButton(R.string.confirm) { _, _ ->
                         viewLifecycleOwner.lifecycleScope.launch {
                             try {
-                                val applied = App.repo.reclassifyFaultLogs(preview = false)
-                                toast(getString(R.string.fix_types_ok, applied.logs))
+                                val applied = App.repo.reclassifyLogTypes(preview = false)
+                                FixLogStore.record(requireContext(), applied.applied)
+                                toast(getString(R.string.fix_types_ok, applied.faultLogs, applied.resolutionLogs))
                                 refreshStats()
                             } catch (e: Exception) {
                                 toast(getString(R.string.op_failed, e.message ?: e.javaClass.simpleName))
@@ -673,6 +676,35 @@ class ToolsFragment : Fragment() {
             } catch (e: Exception) {
                 toast(getString(R.string.op_failed, e.message ?: e.javaClass.simpleName))
             }
+        }
+    }
+
+    /** 撤销类型修复：把记录过的 (id→原类型) 全部还原（后手药） */
+    private fun doUndoFixLogTypes() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            val entries = withContext(Dispatchers.Default) { FixLogStore.all(requireContext()) }
+            if (entries.isEmpty()) {
+                toast(R.string.fix_types_undo_none)
+                return@launch
+            }
+            AlertDialog.Builder(requireContext())
+                .setTitle(R.string.fix_types_undo_title)
+                .setIcon(android.R.drawable.ic_dialog_alert)
+                .setMessage(getString(R.string.fix_types_undo_msg, entries.size))
+                .setPositiveButton(R.string.confirm) { _, _ ->
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        try {
+                            val n = App.repo.undoLogTypeFix(entries)
+                            FixLogStore.clear(requireContext())
+                            toast(getString(R.string.fix_types_undo_ok, n))
+                            refreshStats()
+                        } catch (e: Exception) {
+                            toast(getString(R.string.op_failed, e.message ?: e.javaClass.simpleName))
+                        }
+                    }
+                }
+                .setNegativeButton(R.string.cancel, null)
+                .show()
         }
     }
 

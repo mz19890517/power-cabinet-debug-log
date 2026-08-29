@@ -116,7 +116,8 @@
     <string name="tools_rollback">从备份找回被删记录</string>
     <string name="tools_rollback_desc">扫描备份中本机已缺失的记录并权威插回（自动清除陈旧删除标记）。用于丢失的故障/消除日志恢复，仅需一台手机执行，其余手机靠同步收敛。</string>
     <string name="tools_fix_types">修复日志类型</string>
-    <string name="tools_fix_types_desc">把挂着故障记录却显示为「通过」的日志归类为「故障」日志——旧版本/旧快照合并产生的日志没有 logType 字段，归类被冲成默认值。修复后列表、筛选、导出的故障标注恢复；已解决/消除信息保存在故障记录里不受影响，并会刷新时间戳同步回全队。</string>
+    <string name="tools_fix_types_desc">把挂有故障记录却显示为「通过」的日志标为「故障」；把备注=已解决故障现象、同柜同测试内容的日志标为「消除」（消除与解决方法重新显示）。旧版本/旧快照合并会把类型冲成默认值，修复只改标注、不增删数据，刷新时间戳后同步回全队。</string>
+    <string name="tools_fix_types_undo">撤销类型修复</string>
     <string name="stats_title">数据统计</string>
     <string name="about_offline">数据仅存储于本机SQLite；仅在你主动使用WebDAV同步时才访问自己配置的服务器，不集成任何第三方SDK。\n备份文件为标准JSON（schemaVersion 2），可供后期电脑端/网页端直接读取。</string>
     <string name="export_ok">导出成功：%1$s</string>
@@ -130,10 +131,14 @@
     <string name="rollback_none_title">备份中无缺失记录</string>
     <string name="rollback_none_msg">所选备份里没有本机已缺失的记录，因此没有可找回的内容。请对比下面备份与本机的日志构成，判断该备份是否为丢失之前的产物：\n\n【备份】日志共 %1$d 条（通过 %2$d · 故障 %3$d · 消除 %4$d），故障记录 %5$d 条\n\n【本机】日志共 %6$d 条（故障 %7$d · 消除 %8$d），故障记录 %9$d 条\n\n若备份中的故障/消除日志为 0，说明这份备份生成于丢失之后，请改选更早的备份（如坚果云文件历史）重试。</string>
     <string name="rollback_ok">找回成功：%1$d 条记录已恢复（下次同步将传播回全队）</string>
-    <string name="fix_types_none">无需修复：没有挂着故障记录却显示为「通过」的日志</string>
+    <string name="fix_types_none">无需修复：没有挂着故障记录、或因备注匹配待恢复的消除日志</string>
     <string name="fix_types_confirm_title">确认修复日志类型</string>
-    <string name="fix_types_confirm_msg">将把 %1$d 条日志（挂有 %2$d 条故障记录）的「日志类型」由通过改为故障，并刷新时间戳以便下次同步把正确类型传播回全队。\n\n只改类型标注，不增删任何数据；故障的已解决/消除信息仍保留在故障记录中。确定继续？</string>
-    <string name="fix_types_ok">已把 %1$d 条日志标为「故障」（下次同步传播回全队）</string>
+    <string name="fix_types_confirm_msg">将把 %1$d 条日志改为「故障」（挂载 %2$d 条故障记录），%3$d 条日志改为「消除」（恢复对应故障的解决方法显示），并刷新时间戳以便下次同步把正确类型传播回全队。\n\n只改类型标注，不增删任何数据；修复记录保存在本机，随时可用「撤销类型修复」还原。确定继续？</string>
+    <string name="fix_types_ok">已修复：%1$d 条标为「故障」、%2$d 条标为「消除」（下次同步传播回全队）</string>
+    <string name="fix_types_undo_none">没有可撤销的类型修复记录</string>
+    <string name="fix_types_undo_title">撤销类型修复</string>
+    <string name="fix_types_undo_msg">将把此前修复工具改过的 %1$d 条日志还原为原始类型，并刷新时间戳同步回全队。确定？</string>
+    <string name="fix_types_undo_ok">已还原 %1$d 条日志的类型</string>
     <string name="op_failed">操作失败：%1$s</string>
 
     <!-- 账号与WebDAV同步 -->

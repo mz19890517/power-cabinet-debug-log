@@ -84,12 +84,16 @@ data class RollbackPreview(
     val missingTotal get() = missing.total
 }
 
-/** 日志类型修复结果：把被故障记录指向却仍标成「通过」的日志重分类为「故障」 */
+/** 日志类型修复结果：把被故障记录指向却仍标成「通过」的日志重分类为「故障」；把备注=已解决故障现象的日志重分类为「消除」 */
 data class ReclassifyResult(
-    var logs: Int = 0,
-    var faults: Int = 0
+    var faultLogs: Int = 0,
+    var resolutionLogs: Int = 0,
+    var attachedFaults: Int = 0
 ) {
-    val total get() = logs
+    val total get() = faultLogs + resolutionLogs
+
+    /** 本次实际改写（日志id → 原logType），仅应用时填充，供「撤销类型修复」留存 */
+    val applied: MutableMap<String, Int> = mutableMapOf()
 }
 
 /** 删除日志时，对其完成的预选待测项的处置方式（用户弹窗二选一） */
@@ -1751,24 +1755,77 @@ class Repository(private val db: AppDatabase) {
     }
 
     /**
-     * 日志类型修复（v2.24）：把被 ≥1 条故障记录指向、却仍为 logType=0(通过) 的日志
-     * 重分类为 logType=1(故障)，并刷新时间戳以让下次同步按"新者胜"把正确类型传播回全队。
-     * 成因：v2.18 之前版本/旧格式快照合并产生的日志没有 logType 字段，迁移默认值=0；
-     * 故障记录的 logId 一直指向这些日志，故可用关联反推真实类型。
-     * "消除"本身没有独立日志痕迹，其信息保留在故障记录的"已解决"状态中，不受影响。
-     * preview=true 只统计不写库。
+     * 日志类型修复（v2.25）：按数据事实恢复被旧版本/旧格式快照合并冲掉的日志类型。
+     * 1) 故障：被 ≥1 条故障记录（logId 指回）却仍为 logType=0 的日志 → 1(故障)；
+     * 2) 消除：未被故障记录指向、备注=同一柜子同一测试内容下某条"已解决"故障的现象 → 2(消除)，
+     *    恢复后时间线/故障列表即可显示解决方法。
+     * 只改 logType 一个字段 + 刷新 updatedAt，下次同步以"新者胜"传播回全队；幂等。
+     * preview=true 只统计不写库；应用时把 (id→原类型) 写入 applied 供 Frag 留存撤销。
      */
-    suspend fun reclassifyFaultLogs(preview: Boolean): ReclassifyResult {
+    suspend fun reclassifyLogTypes(preview: Boolean): ReclassifyResult {
         val logs = logDao.allOnce()
-        val faultLogIds = faultDao.allOnce().map { it.logId }.filter { it.isNotBlank() }.toHashSet()
-        val targets = logs.filter { it.logType != DebugLog.LOG_TYPE_FAULT && it.id in faultLogIds }
-        val targetIds = targets.map { it.id }.toHashSet()
-        val attachedFaults = faultDao.allOnce().count { it.logId in targetIds }
-        if (preview) return ReclassifyResult(logs = targets.size, faults = attachedFaults)
+        val logById = logs.associateBy { it.id }
+        val faults = faultDao.allOnce()
+        val faultLogIds = faults.map { it.logId }.filter { it.isNotBlank() }.toHashSet()
+
+        // 1. 故障日志：被 ≥1 条故障记录指向（老数据/被冲掉类型的故障日志都满足）
+        val faultTargets = logs.filter { it.logType != DebugLog.LOG_TYPE_FAULT && it.id in faultLogIds }
+        val faultTargetIds = faultTargets.map { it.id }.toHashSet()
+        val attachedFaults = faults.count { it.logId in faultTargetIds }
+
+        // 2. 消除日志：未挂故障记录、备注非空，且同柜同内容存在"已解决且现象==备注"的故障
+        val resolvedFaults = faults.filter {
+            it.status == FaultRecord.STATUS_RESOLVED &&
+                it.logId.isNotBlank() && it.symptom.isNotBlank() && it.logId in logById
+        }
+        val resTargets = logs.filter { log ->
+            log.logType != DebugLog.LOG_TYPE_RESOLUTION &&
+                log.id !in faultTargetIds &&
+                log.remark.isNotBlank() &&
+                resolvedFaults.any { f ->
+                    f.symptom == log.remark && logById[f.logId]?.let {
+                        it.instanceId == log.instanceId && it.testContent == log.testContent
+                    } == true
+                }
+        }
+
+        val result = ReclassifyResult(
+            faultLogs = faultTargets.size,
+            resolutionLogs = resTargets.size,
+            attachedFaults = attachedFaults
+        )
+        if (preview) return result
         val t = now()
         db.withTransaction {
-            targets.forEach { logDao.update(it.copy(logType = DebugLog.LOG_TYPE_FAULT, updatedAt = t)) }
+            faultTargets.forEach {
+                result.applied[it.id] = it.logType
+                logDao.update(it.copy(logType = DebugLog.LOG_TYPE_FAULT, updatedAt = t))
+            }
+            resTargets.forEach {
+                result.applied[it.id] = it.logType
+                logDao.update(it.copy(logType = DebugLog.LOG_TYPE_RESOLUTION, updatedAt = t))
+            }
         }
-        return ReclassifyResult(logs = targets.size, faults = attachedFaults)
+        return result
+    }
+
+    /**
+     * 撤销类型修复：把修复工具留存过的 (日志id→原类型) 还原，并刷新时间戳同步回全队。
+     * 幂等：当前类型已与原始一致的跳过。返回实际还原条数。
+     */
+    suspend fun undoLogTypeFix(applied: Map<String, Int>): Int {
+        if (applied.isEmpty()) return 0
+        val t = now()
+        var n = 0
+        db.withTransaction {
+            applied.forEach { (id, orig) ->
+                val cur = logDao.getByIdOnce(id) ?: return@forEach
+                if (cur.logType != orig) {
+                    logDao.update(cur.copy(logType = orig, updatedAt = t))
+                    n++
+                }
+            }
+        }
+        return n
     }
 }

@@ -374,6 +374,15 @@
             android:textColor="@color/text_secondary"
             android:textSize="12sp" />
 
+        <Button
+            android:id="@+id/btn_fix_types_undo"
+            style="?attr/materialButtonOutlinedStyle"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:layout_marginTop="6dp"
+            android:textSize="12sp"
+            android:text="@string/tools_fix_types_undo" />
+
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
