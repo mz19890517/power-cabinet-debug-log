@@ -84,6 +84,14 @@ data class RollbackPreview(
     val missingTotal get() = missing.total
 }
 
+/** 日志类型修复结果：把被故障记录指向却仍标成「通过」的日志重分类为「故障」 */
+data class ReclassifyResult(
+    var logs: Int = 0,
+    var faults: Int = 0
+) {
+    val total get() = logs
+}
+
 /** 删除日志时，对其完成的预选待测项的处置方式（用户弹窗二选一） */
 enum class LogDeleteMode {
     /** 删除通过日志：恢复预选待测项 */
@@ -1740,5 +1748,27 @@ class Repository(private val db: AppDatabase) {
         }.map { it.copy(updatedAt = t) }
         val insD = pb.debuggers.filter { it.id !in ldById && it.name !in ldNames }.map { it.copy(updatedAt = t) }
         return RollbackRows(insP, insT, insC, insI, insL, insF, insPl, insD)
+    }
+
+    /**
+     * 日志类型修复（v2.24）：把被 ≥1 条故障记录指向、却仍为 logType=0(通过) 的日志
+     * 重分类为 logType=1(故障)，并刷新时间戳以让下次同步按"新者胜"把正确类型传播回全队。
+     * 成因：v2.18 之前版本/旧格式快照合并产生的日志没有 logType 字段，迁移默认值=0；
+     * 故障记录的 logId 一直指向这些日志，故可用关联反推真实类型。
+     * "消除"本身没有独立日志痕迹，其信息保留在故障记录的"已解决"状态中，不受影响。
+     * preview=true 只统计不写库。
+     */
+    suspend fun reclassifyFaultLogs(preview: Boolean): ReclassifyResult {
+        val logs = logDao.allOnce()
+        val faultLogIds = faultDao.allOnce().map { it.logId }.filter { it.isNotBlank() }.toHashSet()
+        val targets = logs.filter { it.logType != DebugLog.LOG_TYPE_FAULT && it.id in faultLogIds }
+        val targetIds = targets.map { it.id }.toHashSet()
+        val attachedFaults = faultDao.allOnce().count { it.logId in targetIds }
+        if (preview) return ReclassifyResult(logs = targets.size, faults = attachedFaults)
+        val t = now()
+        db.withTransaction {
+            targets.forEach { logDao.update(it.copy(logType = DebugLog.LOG_TYPE_FAULT, updatedAt = t)) }
+        }
+        return ReclassifyResult(logs = targets.size, faults = attachedFaults)
     }
 }

@@ -85,6 +85,7 @@ class ToolsFragment : Fragment() {
         b.btnRollback.setOnClickListener {
             rollbackLauncher.launch(arrayOf(JSON_MIME, "text/*", "application/octet-stream"))
         }
+        b.btnFixTypes.setOnClickListener { doFixLogTypes() }
 
         // ---- 账号与同步 ----
         b.btnLogin.setOnClickListener { showLoginDialog() }
@@ -639,6 +640,40 @@ class ToolsFragment : Fragment() {
             )
             .setPositiveButton(R.string.close, null)
             .show()
+    }
+
+    // ---------- 修复日志类型（v2.24） ----------
+
+    /** 把被故障记录指向却显示为「通过」的日志重分类为「故障」，恢复列表/筛选/导出的类型标注 */
+    private fun doFixLogTypes() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val r = withContext(Dispatchers.Default) { App.repo.reclassifyFaultLogs(preview = true) }
+                if (r.logs == 0) {
+                    toast(R.string.fix_types_none)
+                    return@launch
+                }
+                AlertDialog.Builder(requireContext())
+                    .setTitle(R.string.fix_types_confirm_title)
+                    .setIcon(android.R.drawable.ic_dialog_info)
+                    .setMessage(getString(R.string.fix_types_confirm_msg, r.logs, r.faults))
+                    .setPositiveButton(R.string.confirm) { _, _ ->
+                        viewLifecycleOwner.lifecycleScope.launch {
+                            try {
+                                val applied = App.repo.reclassifyFaultLogs(preview = false)
+                                toast(getString(R.string.fix_types_ok, applied.logs))
+                                refreshStats()
+                            } catch (e: Exception) {
+                                toast(getString(R.string.op_failed, e.message ?: e.javaClass.simpleName))
+                            }
+                        }
+                    }
+                    .setNegativeButton(R.string.cancel, null)
+                    .show()
+            } catch (e: Exception) {
+                toast(getString(R.string.op_failed, e.message ?: e.javaClass.simpleName))
+            }
+        }
     }
 
     companion object {
